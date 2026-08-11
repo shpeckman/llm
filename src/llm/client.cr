@@ -33,7 +33,7 @@ class LLM::Client
            options : Options = Options.new) : ChatResponse
     plan = plan_for(messages, tools, options)
     body = request_body(plan, messages, tools, options, false)
-    with_retry(->{ true }) do
+    with_retry(-> { true }) do
       uri    = URI.parse(base_url)
       client = new_http_client(uri)
       begin
@@ -53,7 +53,7 @@ class LLM::Client
     plan    = plan_for(messages, tools, options)
     body    = request_body(plan, messages, tools, options, true)
     emitted = false
-    with_retry(->{ !emitted }) do
+    with_retry(-> { !emitted }) do
       accumulator = StreamAccumulator.new
       uri         = URI.parse(base_url)
       client      = new_http_client(uri)
@@ -213,7 +213,7 @@ class LLM::Client
   end
 
   private def new_http_client(uri : URI) : HTTP::Client
-    client              = HTTP::Client.new(uri)
+    client = HTTP::Client.new(uri)
     client.read_timeout = timeout
     client
   end
@@ -344,7 +344,7 @@ class LLM::Client
       if choices = json["choices"]?
         if choice = choices.as_a?.try(&.first?)
           if delta = choice["delta"]?
-            content_delta   = delta["content"]?.try(&.as_s?)
+            content_delta = delta["content"]?.try(&.as_s?)
             reasoning_delta = delta["reasoning_content"]?.try(&.as_s?) ||
                               delta["reasoning"]?.try(&.as_s?)
             if tool_calls = delta["tool_calls"]?
@@ -388,7 +388,7 @@ class LLM::Client
     end
 
     def response : ChatResponse
-      calls   = @tool_calls.keys.sort!.map { |index| @tool_calls[index].to_tool_call }
+      calls = @tool_calls.keys.sort!.map { |index| @tool_calls[index].to_tool_call }
       message = Message.assistant(
         content: @has_content ? @content.to_s : nil,
         tool_calls: calls.empty? ? nil : calls,

@@ -33,7 +33,7 @@ module LLM
 
     def self.build(status : Int32, body : String, headers : HTTP::Headers? = nil) : APIError
       type, detail, code = describe(body)
-      after   = retry_after_from(headers)
+      after = retry_after_from(headers)
       message = String.build do |io|
         io << "API error " << status
         io << " (" << type << ')' if type
@@ -65,7 +65,7 @@ module LLM
     end
 
     private def self.describe(body : String) : Tuple(String?, String?, String?)
-      json = JSON.parse(body)
+      json  = JSON.parse(body)
       error = json["error"]?
       return {nil, nil, nil} if error.nil? || error.raw.nil?
       {

@@ -78,15 +78,15 @@ module LLM
   end
 
   class Options
-    property model            : String?
-    property temperature      : Float64?
-    property max_tokens       : Int32?
-    property thinking         : Bool?
+    property model             : String?
+    property temperature       : Float64?
+    property max_tokens        : Int32?
+    property thinking          : Bool?
     property preserve_thinking : Bool?
-    property reasoning_effort : String?
-    property tool_choice      : ToolChoice?
-    property prompt_cache_key : String?
-    property include_usage    : Bool
+    property reasoning_effort  : String?
+    property tool_choice       : ToolChoice?
+    property prompt_cache_key  : String?
+    property include_usage     : Bool
 
     def initialize(@model : String? = nil, @temperature : Float64? = nil,
                    @max_tokens : Int32? = nil, @thinking : Bool? = nil,

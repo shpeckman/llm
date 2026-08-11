@@ -58,14 +58,14 @@ module LLM
       prompt_cache_key: true)
 
     MODELS = [
-      {"kimi-k3", K3},
-      {"kimi-k2.7-code", K2_7_CODE},
-      {"kimi-k2.6", K2_6},
-      {"kimi-k2.5", K2_5},
-      {"moonshot-v1-8k-vision-preview", MOONSHOT_V1_VISION},
-      {"moonshot-v1-32k-vision-preview", MOONSHOT_V1_VISION},
+      {"kimi-k3",                         K3},
+      {"kimi-k2.7-code",                  K2_7_CODE},
+      {"kimi-k2.6",                       K2_6},
+      {"kimi-k2.5",                       K2_5},
+      {"moonshot-v1-8k-vision-preview",   MOONSHOT_V1_VISION},
+      {"moonshot-v1-32k-vision-preview",  MOONSHOT_V1_VISION},
       {"moonshot-v1-128k-vision-preview", MOONSHOT_V1_VISION},
-      {"moonshot-v1", MOONSHOT_V1},
+      {"moonshot-v1",                     MOONSHOT_V1},
     ]
 
     def initialize
