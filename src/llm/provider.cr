@@ -1,27 +1,28 @@
 # src/llm/provider.cr
 class LLM::Provider
-  enum ThinkingStyle
-    None
-    ThinkingObject
-    EffortOnly
-  end
+  alias ModelTable = Array(Tuple(String, Capabilities))
 
-  getter name             : String
-  getter base_url         : String
-  getter default_model    : String
-  getter default_thinking : Bool?
-  getter default_effort   : String?
-  @api_key_env            : Array(String)
+  EMPTY_TABLE = ModelTable.new
+
+  getter name          : String
+  getter base_url      : String
+  getter default_model : String
+  @api_key_env         : Array(String)
+  @fallback            : Capabilities
+  @models              : ModelTable
 
   def api_key_env : Array(String)
     @api_key_env.dup
   end
 
   def initialize(@name : String, @base_url : String, @default_model : String,
-                 api_key_env : Array(String), @default_thinking : Bool? = nil,
-                 @default_effort : String? = nil)
+                 api_key_env : Array(String),
+                 fallback : Capabilities = Capabilities::DEFAULT,
+                 models : ModelTable = EMPTY_TABLE)
     @base_url    = @base_url.rstrip('/')
     @api_key_env = api_key_env.dup
+    @fallback    = fallback
+    @models      = models
   end
 
   def self.kimi : Provider
@@ -33,9 +34,10 @@ class LLM::Provider
   end
 
   def self.custom(name : String, base_url : String, default_model : String,
-                  api_key_env : Array(String), thinking : Bool? = nil,
-                  effort : String? = nil) : Provider
-    new(name, base_url, default_model, api_key_env, thinking, effort)
+                  api_key_env : Array(String),
+                  fallback : Capabilities = Capabilities::DEFAULT,
+                  models : ModelTable = EMPTY_TABLE) : Provider
+    new(name, base_url, default_model, api_key_env, fallback, models)
   end
 
   def self.for_name(name : String) : Provider?
@@ -45,36 +47,12 @@ class LLM::Provider
     end
   end
 
-  def supports_tools?(model : String) : Bool
-    true
-  end
-
-  def thinking_style(model : String) : ThinkingStyle
-    ThinkingStyle::None
-  end
-
-  def supports_reasoning_effort?(model : String) : Bool
-    thinking_style(model).effort_only? || thinking_style(model).thinking_object?
-  end
-
-  def thinking_active?(model : String, thinking : Bool?) : Bool
-    case thinking_style(model)
-    when .none?
-      false
-    when .effort_only?
-      true
-    else
-      resolved = thinking.nil? ? @default_thinking : thinking
-      resolved.nil? ? false : resolved
+  def capabilities(model : String) : Capabilities
+    key = model.downcase
+    @models.each do |entry|
+      return entry[1] if key.starts_with?(entry[0])
     end
-  end
-
-  def supports_sampling_params?(model : String, thinking : Bool?) : Bool
-    !thinking_active?(model, thinking)
-  end
-
-  def preserve_reasoning?(model : String, has_tool_calls : Bool) : Bool
-    false
+    @fallback
   end
 
   def resolve_api_key(explicit : String? = nil, env : ENV.class = ENV) : String?

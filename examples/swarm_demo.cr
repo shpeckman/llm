@@ -13,10 +13,10 @@ swarm.add_role("researcher",
   system_prompt: "You are a meticulous researcher. Answer with concrete, verifiable facts and keep it under 120 words.")
 
 swarm.add_role("critic",
-  system_prompt: "You are a sharp but fair critic. Point out weaknesses, risks, and counter-arguments in under 120 words.") do |agent|
+  system_prompt: "You are a sharp but fair critic. Point out weaknesses, risks, and counter-arguments in under 120 words.",
+  max_iterations: 5) do |agent|
   agent.thinking = true
   agent.reasoning_effort = "high"
-  agent.max_iterations = 5
 end
 
 swarm.add_role("synthesizer",
@@ -24,7 +24,7 @@ swarm.add_role("synthesizer",
 
 swarm.on_result do |result|
   if result.success?
-    puts "  ✓ #{result.role.name} finished"
+    puts "  ✓ #{result.role.name} finished (#{result.usage.total_tokens} tokens)"
   else
     puts "  ✗ #{result.role.name} failed: #{result.error.try(&.message)}"
   end

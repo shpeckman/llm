@@ -1,7 +1,10 @@
 # src/llm.cr
 require "./llm/errors"
+require "./llm/capabilities"
 require "./llm/types"
+require "./llm/options"
 require "./llm/tool"
+require "./llm/provider"
 require "./llm/client"
 require "./llm/tools/files"
 require "./llm/tools/shell"

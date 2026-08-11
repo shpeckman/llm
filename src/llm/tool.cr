@@ -2,6 +2,8 @@
 require "json"
 
 module LLM::Tool
+  NAME_PATTERN = /\A[a-zA-Z_][a-zA-Z0-9\-_]{2,63}\z/
+
   abstract class Custom
     @api_schema : JSON::Any?
 
@@ -34,12 +36,18 @@ module LLM::Tool
     end
 
     def register(tool : Custom) : Custom
-      if existing = @by_name[tool.name]?
-        @tools.map! { |t| t.same?(existing) ? tool : t }
+      name = tool.name
+      unless NAME_PATTERN.matches?(name)
+        raise ToolError.new("invalid tool name '#{name}': must be 3-64 characters, " \
+                            "start with a letter or underscore, and contain only " \
+                            "letters, digits, '-' or '_'")
+      end
+      if existing = @by_name[name]?
+        @tools.map! { |candidate| candidate.same?(existing) ? tool : candidate }
       else
         @tools << tool
       end
-      @by_name[tool.name] = tool
+      @by_name[name] = tool
       tool
     end
 
@@ -48,7 +56,7 @@ module LLM::Tool
     end
 
     def each(& : Custom ->)
-      @tools.each { |t| yield t }
+      @tools.each { |tool| yield tool }
     end
 
     def schemas : Array(JSON::Any)

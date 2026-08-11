@@ -3,20 +3,16 @@ class LLM::Swarm
   alias AgentConfigurator = Agent ->
 
   class Role
-    getter name             : String
-    getter system_prompt    : String
-    getter model            : String?
-    getter max_iterations   : Int32
-    getter thinking         : Bool?
-    getter reasoning_effort : String?
-    getter configure        : AgentConfigurator?
+    getter name           : String
+    getter system_prompt  : String
+    getter max_iterations : Int32
+    getter options        : Options
+    getter configure      : AgentConfigurator?
 
     def initialize(@name : String,
                    @system_prompt : String = Agent::DEFAULT_SYSTEM_PROMPT,
-                   @model : String? = nil,
                    @max_iterations : Int32 = Agent::DEFAULT_MAX_ITERATIONS,
-                   @thinking : Bool? = nil,
-                   @reasoning_effort : String? = nil,
+                   @options : Options = Options.new,
                    @configure : AgentConfigurator? = nil)
     end
   end
@@ -25,10 +21,12 @@ class LLM::Swarm
     getter role   : Role
     getter task   : String
     getter output : String?
+    getter usage  : Usage
     getter error  : Exception?
 
     def initialize(@role : Role, @task : String,
                    @output : String? = nil,
+                   @usage : Usage = Usage.new,
                    @error : Exception? = nil)
     end
 
@@ -36,7 +34,6 @@ class LLM::Swarm
       @error.nil?
     end
 
-    # Returns the output on success; re-raises the stored exception on failure.
     def output! : String
       if error = @error
         raise error
@@ -56,24 +53,18 @@ class LLM::Swarm
 
   def add_role(name : String,
                system_prompt : String = Agent::DEFAULT_SYSTEM_PROMPT,
-               model : String? = nil,
                max_iterations : Int32 = Agent::DEFAULT_MAX_ITERATIONS,
-               thinking : Bool? = nil,
-               reasoning_effort : String? = nil,
+               options : Options = Options.new,
                configure : AgentConfigurator? = nil) : Role
-    register_role(Role.new(name, system_prompt, model, max_iterations,
-      thinking, reasoning_effort, configure))
+    register_role(Role.new(name, system_prompt, max_iterations, options, configure))
   end
 
   def add_role(name : String,
                system_prompt : String = Agent::DEFAULT_SYSTEM_PROMPT,
-               model : String? = nil,
                max_iterations : Int32 = Agent::DEFAULT_MAX_ITERATIONS,
-               thinking : Bool? = nil,
-               reasoning_effort : String? = nil,
+               options : Options = Options.new,
                &configure : Agent ->) : Role
-    add_role(name, system_prompt, model, max_iterations,
-      thinking, reasoning_effort, configure)
+    add_role(name, system_prompt, max_iterations, options, configure)
   end
 
   def [](name : String) : Role?
@@ -84,7 +75,6 @@ class LLM::Swarm
     @on_result = block
   end
 
-  # Runs the same task for every configured role, or for the named subset.
   def run(task : String, roles : Array(String)? = nil) : Array(Result)
     selected =
       if names = roles
@@ -97,7 +87,6 @@ class LLM::Swarm
     execute(selected.map { |role| {role, task} })
   end
 
-  # Runs role-specific tasks. Every key must match a configured role name.
   def run(tasks : Hash(String, String)) : Array(Result)
     raise SwarmError.new("no tasks given") if tasks.empty?
     pairs = tasks.map do |name, task|
@@ -135,13 +124,13 @@ class LLM::Swarm
   end
 
   private def run_task(role : Role, task : String) : Result
-    agent = Agent.new(@client, model: role.model, system_prompt: role.system_prompt,
-      max_iterations: role.max_iterations, thinking: role.thinking,
-      reasoning_effort: role.reasoning_effort)
+    agent = Agent.new(@client, system_prompt: role.system_prompt,
+      max_iterations: role.max_iterations, options: role.options.dup)
     if configure = role.configure
       configure.call agent
     end
-    Result.new(role, task, output: agent.run(task))
+    output = agent.run(task)
+    Result.new(role, task, output: output, usage: agent.usage)
   rescue ex
     Result.new(role, task, error: ex)
   end

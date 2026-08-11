@@ -3,26 +3,48 @@ class LLM::Agent
   DEFAULT_SYSTEM_PROMPT  = "You are a helpful coding assistant. You help the user with software engineering tasks: reading, writing, and editing files, running shell commands, and searching the codebase. Use the available tools to inspect the workspace before making changes, prefer small precise edits, keep your answers concise, and explain what you did."
   DEFAULT_MAX_ITERATIONS = 50
 
-  getter client             : Client
-  getter registry           : Tool::Registry
-  getter history            : Array(Message)
-  property system_prompt    : String
-  property model            : String?
-  property max_iterations   : Int32
-  property thinking         : Bool?
-  property reasoning_effort : String?
+  DELEGATED_OPTIONS = {
+    model:             "String?",
+    temperature:       "Float64?",
+    max_tokens:        "Int32?",
+    thinking:          "Bool?",
+    preserve_thinking: "Bool?",
+    reasoning_effort:  "String?",
+    tool_choice:       "ToolChoice?",
+    prompt_cache_key:  "String?",
+    include_usage:     "Bool",
+  }
+
+  getter client           : Client
+  getter registry         : Tool::Registry
+  getter history          : Array(Message)
+  getter options          : Options
+  getter usage            : Usage
+  property system_prompt  : String
+  property max_iterations : Int32
+
+  {% for name, type in DELEGATED_OPTIONS %}
+    def {{name.id}} : {{type.id}}
+      @options.{{name.id}}
+    end
+
+    def {{name.id}}=(value : {{type.id}}) : {{type.id}}
+      @options.{{name.id}} = value
+    end
+  {% end %}
 
   @on_assistant_message : (Message ->)?
   @on_tool_result       : (ToolCall, String ->)?
   @on_token             : (String ->)?
   @on_reasoning         : (String ->)?
 
-  def initialize(@client : Client, @model : String? = nil,
+  def initialize(@client : Client,
                  @system_prompt : String = DEFAULT_SYSTEM_PROMPT,
                  @max_iterations : Int32 = DEFAULT_MAX_ITERATIONS,
-                 @thinking : Bool? = nil, @reasoning_effort : String? = nil)
+                 @options : Options = Options.new)
     @registry = Tool::Registry.new
     @history  = [] of Message
+    @usage    = Usage.new
   end
 
   def register(tool : Tool::Custom) : Tool::Custom
@@ -54,7 +76,7 @@ class LLM::Agent
     @on_reasoning = block
   end
 
-  def run(input : String) : String
+  def run(input : Content) : String
     ensure_system_prompt
     @history << Message.user(input)
 
@@ -62,6 +84,9 @@ class LLM::Agent
       response = chat_round
       message  = response.message
       @history << message
+      if usage = response.usage
+        @usage += usage
+      end
       if hook = @on_assistant_message
         hook.call message
       end
@@ -75,7 +100,7 @@ class LLM::Agent
           end
         end
       else
-        return message.content || ""
+        return message.text
       end
     end
 
@@ -84,6 +109,7 @@ class LLM::Agent
 
   def reset : Nil
     @history.clear
+    @usage = Usage.new
   end
 
   private def ensure_system_prompt : Nil
@@ -97,14 +123,12 @@ class LLM::Agent
   private def chat_round : ChatResponse
     if hook = @on_token
       reasoning_hook = @on_reasoning
-      @client.chat_stream(@history, tools_arg, model: @model, temperature: nil,
-        max_tokens: nil, thinking: @thinking, reasoning_effort: @reasoning_effort) do |chunk|
+      @client.chat_stream(@history, tools_arg, @options) do |chunk|
         chunk.reasoning_delta.try { |delta| reasoning_hook.try(&.call(delta)) }
         chunk.content_delta.try { |delta| hook.call delta }
       end
     else
-      @client.chat(@history, tools_arg, model: @model, temperature: nil,
-        max_tokens: nil, thinking: @thinking, reasoning_effort: @reasoning_effort)
+      @client.chat(@history, tools_arg, @options)
     end
   end
 end

@@ -32,11 +32,18 @@ private def run_and_report(agent : LLM::Agent, streaming : Bool, prompt : String
   else
     puts answer
   end
+  usage = agent.usage
+  unless usage.empty?
+    puts "  · #{usage.prompt_tokens} in (#{usage.cached_tokens} cached) / #{usage.completion_tokens} out".colorize(:dark_gray)
+  end
 end
 
-private def build_agent(provider : LLM::Provider, *, streaming : Bool = true) : LLM::Agent
+private def build_agent(provider : LLM::Provider, *, streaming : Bool = true,
+                        session : String? = nil) : LLM::Agent
   client = LLM::Client.new(provider)
   agent  = LLM::Agent.new(client)
+  agent.include_usage = true
+  agent.prompt_cache_key = session if session && client.capabilities.prompt_cache_key
   agent.register(TimeTool.new)
   agent.register_workspace_tools(Dir.current)
 
@@ -69,9 +76,14 @@ deepseek.reasoning_effort = "high"
 run_and_report(deepseek, true, "List the Crystal source files under src/ and tell me which one defines the Agent class.")
 
 if ENV["MOONSHOT_API_KEY"]? || ENV["KIMI_API_KEY"]?
-  rule "Kimi K3 · always-on thinking · effort max"
-  kimi = build_agent(LLM::Provider.kimi)
+  rule "Kimi K3 · always-on thinking · effort max · cached session"
+  kimi = build_agent(LLM::Provider.kimi, session: "llm-demo-#{Time.utc.to_unix}")
+  kimi.max_tokens = 4096
   run_and_report(kimi, true, "Greet me in exactly five words.")
+
+  rule "Kimi K3 · agentic loop with capped output"
+  kimi.reset
+  run_and_report(kimi, true, "Which file defines the retry policy? Answer with just the path.")
 else
   rule "Kimi skipped"
   puts "Set MOONSHOT_API_KEY (or KIMI_API_KEY) to run the Kimi comparison."
