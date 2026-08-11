@@ -13,7 +13,7 @@ class LLM::Client
   delegate base_url, to: @provider
 
   def initialize(@provider : Provider = Provider.kimi, api_key : String? = nil,
-                 default_model : String? = nil, @timeout : Time::Span = 120.seconds,
+                 default_model : String? = nil, @timeout : Time::Span = 600.seconds,
                  @retry : RetryPolicy = RetryPolicy.new)
     resolved_key = @provider.resolve_api_key(api_key)
     if resolved_key.nil?
@@ -130,6 +130,12 @@ class LLM::Client
         raise UnsupportedFeatureError.new("forcing a named tool is incompatible with " \
                                           "thinking on #{@provider.name}/#{model}")
       end
+      if choice.mode.required? && caps.thinking_active?(thinking) &&
+         !caps.forced_tool_choice_with_thinking
+        raise UnsupportedFeatureError.new("#{@provider.name}/#{model} does not support " \
+                                          "tool_choice 'required' while thinking is enabled; " \
+                                          "disable thinking or use 'auto'")
+      end
     end
 
     effort = options.reasoning_effort
@@ -162,6 +168,10 @@ class LLM::Client
     if options.prompt_cache_key && !caps.prompt_cache_key
       raise UnsupportedFeatureError.new("#{@provider.name}/#{model} does not accept " \
                                         "prompt_cache_key")
+    end
+
+    if options.user_id && !caps.user_id
+      raise UnsupportedFeatureError.new("#{@provider.name}/#{model} does not accept user_id")
     end
 
     validate_media!(model, caps, messages)
@@ -232,7 +242,8 @@ class LLM::Client
   private def request_body(plan : Plan, messages : Array(Message),
                            tools : Array(Tool::Custom)?, options : Options,
                            stream : Bool) : String
-    caps = plan.caps
+    caps          = plan.caps
+    tools_present = !(tools.nil? || tools.empty?)
     JSON.build do |json|
       json.object do
         json.field "model", plan.model
@@ -240,12 +251,12 @@ class LLM::Client
           json.array do
             messages.each do |message|
               preserve = message.role == "assistant" &&
-                         caps.preserve_reasoning?(message.tool_call?, plan.preserve)
+                         caps.preserve_reasoning?(message.tool_call?, tools_present, plan.preserve)
               message.build_json(json, preserve)
             end
           end
         end
-        if tools && !tools.empty?
+        if tools && tools_present
           json.field "tools" do
             json.array do
               tools.each { |tool| tool.to_api_schema.to_json(json) }
@@ -279,6 +290,9 @@ class LLM::Client
         end
         if key = options.prompt_cache_key
           json.field "prompt_cache_key", key
+        end
+        if user_id = options.user_id
+          json.field "user_id", user_id
         end
         json.field "stream", stream
         if stream && options.include_usage

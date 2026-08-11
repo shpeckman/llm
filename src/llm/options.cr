@@ -86,13 +86,14 @@ module LLM
     property reasoning_effort  : String?
     property tool_choice       : ToolChoice?
     property prompt_cache_key  : String?
+    property user_id           : String?
     property include_usage     : Bool
 
     def initialize(@model : String? = nil, @temperature : Float64? = nil,
                    @max_tokens : Int32? = nil, @thinking : Bool? = nil,
                    @preserve_thinking : Bool? = nil, @reasoning_effort : String? = nil,
                    @tool_choice : ToolChoice? = nil, @prompt_cache_key : String? = nil,
-                   @include_usage : Bool = false)
+                   @user_id : String? = nil, @include_usage : Bool = false)
     end
   end
 end

@@ -12,6 +12,7 @@ class LLM::Agent
     reasoning_effort:  "String?",
     tool_choice:       "ToolChoice?",
     prompt_cache_key:  "String?",
+    user_id:           "String?",
     include_usage:     "Bool",
   }
 

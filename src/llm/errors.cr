@@ -43,10 +43,12 @@ module LLM
       case
       when status == 400 && type == "content_filter"
         ContentFilterError.new(status, body, type, code, after, message)
-      when status == 400
+      when status == 400 || status == 422
         InvalidRequestError.new(status, body, type, code, after, message)
       when status == 401
         AuthenticationError.new(status, body, type, code, after, message)
+      when status == 402
+        InsufficientBalanceError.new(status, body, type, code, after, message)
       when status == 403
         PermissionError.new(status, body, type, code, after, message)
       when status == 404
@@ -97,6 +99,8 @@ module LLM
   class ContentFilterError < APIError; end
 
   class AuthenticationError < APIError; end
+
+  class InsufficientBalanceError < APIError; end
 
   class PermissionError < APIError; end
 

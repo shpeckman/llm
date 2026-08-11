@@ -241,6 +241,7 @@ module LLM
           cached = int_at(details, "cached_tokens") unless details.raw.nil?
         end
       end
+      cached = int_at(json, "prompt_cache_hit_tokens") if cached == 0
       new(int_at(json, "prompt_tokens"), int_at(json, "completion_tokens"),
         int_at(json, "total_tokens"), cached)
     end
