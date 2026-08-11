@@ -9,6 +9,7 @@ require "./llm/client"
 require "./llm/tools/files"
 require "./llm/tools/shell"
 require "./llm/tools/search"
+require "./llm/mvu"
 require "./llm/agent"
 require "./llm/swarm"
 

@@ -30,14 +30,17 @@ class LLM::Client
   end
 
   def chat(messages : Array(Message), tools : Array(Tool::Custom)? = nil,
-           options : Options = Options.new) : ChatResponse
+           options : Options = Options.new,
+           cancel : Channel(Nil)? = nil) : ChatResponse
     plan = plan_for(messages, tools, options)
     body = request_body(plan, messages, tools, options, false)
-    with_retry(-> { true }) do
+    with_retry(cancel, -> { true }) do
       uri    = URI.parse(base_url)
       client = new_http_client(uri)
+      watch(client, cancel)
       begin
         response = client.post(completions_path(uri), headers: request_headers, body: body)
+        raise CancelledError.new("request was cancelled") if cancelled?(cancel)
         if response.status_code >= 400
           raise APIError.build(response.status_code, response.body, response.headers)
         end
@@ -49,20 +52,23 @@ class LLM::Client
   end
 
   def chat_stream(messages : Array(Message), tools : Array(Tool::Custom)? = nil,
-                  options : Options = Options.new, &block : StreamChunk ->) : ChatResponse
+                  options : Options = Options.new,
+                  cancel : Channel(Nil)? = nil, &block : StreamChunk ->) : ChatResponse
     plan    = plan_for(messages, tools, options)
     body    = request_body(plan, messages, tools, options, true)
     emitted = false
-    with_retry(-> { !emitted }) do
+    with_retry(cancel, -> { !emitted }) do
       accumulator = StreamAccumulator.new
       uri         = URI.parse(base_url)
       client      = new_http_client(uri)
+      watch(client, cancel)
       begin
         client.post(completions_path(uri), headers: request_headers, body: body) do |response|
           if response.status_code >= 400
             raise APIError.build(response.status_code, response.body_io.gets_to_end, response.headers)
           end
           while line = response.body_io.gets
+            raise CancelledError.new("request was cancelled") if cancelled?(cancel)
             line = line.chomp
             next if line.empty?
             next unless line.starts_with?("data:")
@@ -77,6 +83,7 @@ class LLM::Client
       ensure
         client.close
       end
+      raise CancelledError.new("request was cancelled") if cancelled?(cancel)
       accumulator.response
     end
   end
@@ -200,16 +207,35 @@ class LLM::Client
     end
   end
 
-  private def with_retry(resumable : -> Bool, &block : -> ChatResponse) : ChatResponse
+  private def cancelled?(cancel : Channel(Nil)?) : Bool
+    !cancel.nil? && cancel.closed?
+  end
+
+  private def watch(client : HTTP::Client, cancel : Channel(Nil)?) : Nil
+    return if cancel.nil?
+    spawn do
+      cancel.receive?
+      begin
+        client.close
+      rescue IO::Error
+      end
+    end
+  end
+
+  private def with_retry(cancel : Channel(Nil)?, resumable : -> Bool,
+                         &block : -> ChatResponse) : ChatResponse
     attempt = 0
     loop do
       attempt += 1
+      raise CancelledError.new("request was cancelled") if cancelled?(cancel)
       begin
         return block.call
       rescue ex : APIError
+        raise CancelledError.new("request was cancelled") if cancelled?(cancel)
         raise ex unless ex.retryable? && attempt < @retry.max_attempts && resumable.call
         sleep @retry.delay_for(attempt, ex.retry_after)
       rescue ex : IO::Error
+        raise CancelledError.new("request was cancelled") if cancelled?(cancel)
         raise ex unless attempt < @retry.max_attempts && resumable.call
         sleep @retry.delay_for(attempt, nil)
       end

@@ -23,21 +23,21 @@ module LLM
   struct Capabilities
     ANY_EFFORT = [] of String
 
-    getter tools                          : Bool
-    getter forced_tool_choice             : Bool
+    getter tools                            : Bool
+    getter forced_tool_choice               : Bool
     getter forced_tool_choice_with_thinking : Bool
-    getter thinking                       : ThinkingSupport
-    getter default_thinking               : Bool?
-    getter reasoning_effort               : Bool
-    getter reasoning_efforts              : Array(String)
-    getter default_effort                 : String?
-    getter preserved_thinking             : PreservedThinking
-    getter sampling                       : SamplingSupport
-    getter max_tokens_field               : String
-    getter prompt_cache_key               : Bool
-    getter user_id                        : Bool
-    getter image_input                    : Bool
-    getter video_input                    : Bool
+    getter thinking                         : ThinkingSupport
+    getter default_thinking                 : Bool?
+    getter reasoning_effort                 : Bool
+    getter reasoning_efforts                : Array(String)
+    getter default_effort                   : String?
+    getter preserved_thinking               : PreservedThinking
+    getter sampling                         : SamplingSupport
+    getter max_tokens_field                 : String
+    getter prompt_cache_key                 : Bool
+    getter user_id                          : Bool
+    getter image_input                      : Bool
+    getter video_input                      : Bool
 
     def initialize(*, @tools : Bool = true,
                    @forced_tool_choice : Bool = true,

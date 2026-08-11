@@ -7,12 +7,14 @@ class LLM::Swarm
     getter system_prompt  : String
     getter max_iterations : Int32
     getter options        : Options
+    getter streaming      : Bool
     getter configure      : AgentConfigurator?
 
     def initialize(@name : String,
                    @system_prompt : String = Agent::DEFAULT_SYSTEM_PROMPT,
                    @max_iterations : Int32 = Agent::DEFAULT_MAX_ITERATIONS,
                    @options : Options = Options.new,
+                   @streaming : Bool = false,
                    @configure : AgentConfigurator? = nil)
     end
   end
@@ -42,37 +44,213 @@ class LLM::Swarm
     end
   end
 
+  struct RoleFinished
+    getter slot   : Int32
+    getter output : String
+    getter usage  : Usage
+
+    def initialize(@slot : Int32, @output : String, @usage : Usage)
+    end
+  end
+
+  struct RoleFailed
+    getter slot  : Int32
+    getter error : Exception
+    getter usage : Usage
+
+    def initialize(@slot : Int32, @error : Exception, @usage : Usage)
+    end
+  end
+
+  struct Crashed
+    getter error : Exception
+
+    def initialize(@error : Exception)
+    end
+  end
+
+  struct Cancelled
+  end
+
+  alias Event = RoleFinished | RoleFailed | Crashed | Cancelled
+  alias Cmd = MVU::Cmd(Event)
+  alias Sub = MVU::Sub(Event)
+  alias Emit = Proc(Event, Nil)
+
+  struct Report
+    getter results   : Array(Result?)
+    getter finished  : Result?
+    getter remaining : Int32
+    getter cancelled : Bool
+    getter error     : Exception?
+
+    def initialize(@results : Array(Result?), @finished : Result?,
+                   @remaining : Int32, @cancelled : Bool, @error : Exception?)
+    end
+  end
+
+  class State
+    include MVU::Model(State, Event, Report)
+
+    getter results   : Array(Result?)
+    getter remaining : Int32
+    getter cancelled : Bool
+    getter error     : Exception?
+
+    @client   : Client
+    @pairs    : Array(Tuple(Role, String))
+    @ids      : Array(MVU::SubId)
+    @finished : Result?
+
+    def initialize(@client : Client)
+      @pairs     = [] of Tuple(Role, String)
+      @results   = [] of Result?
+      @ids       = [] of MVU::SubId
+      @remaining = 0
+      @cancelled = false
+      @finished  = nil
+      @error     = nil
+    end
+
+    def begin_run(pairs : Array(Tuple(Role, String))) : Nil
+      @pairs     = pairs
+      @results   = Array(Result?).new(pairs.size) { nil }
+      @ids       = Array(MVU::SubId).new(pairs.size)
+      @remaining = pairs.size
+      @cancelled = false
+      @finished  = nil
+      @error     = nil
+      pairs.each_index { |index| @ids << MVU::SubId.new(:role, index) }
+    end
+
+    def update(event : Event) : {State, Cmd}
+      @finished = nil
+
+      case event
+      in RoleFinished
+        role, task = @pairs[event.slot]
+        settle(event.slot, Result.new(role, task, output: event.output, usage: event.usage))
+      in RoleFailed
+        role, task = @pairs[event.slot]
+        settle(event.slot, Result.new(role, task, usage: event.usage, error: event.error))
+      in Crashed
+        @error = event.error
+        @ids.clear
+        @remaining = 0
+      in Cancelled
+        @cancelled = true
+        @ids.clear
+      end
+
+      {self, Cmd.none}
+    end
+
+    def view : Report
+      Report.new(@results, @finished, @remaining, @cancelled, @error)
+    end
+
+    def done? : Bool
+      @cancelled || @remaining.zero? || !@error.nil?
+    end
+
+    def recover(error : Exception) : Event
+      Crashed.new(error)
+    end
+
+    def subscription_ids : Array(MVU::SubId)
+      @ids
+    end
+
+    def subscription(id : MVU::SubId) : Sub
+      slot = id.slot
+      role, task = @pairs[slot]
+
+      Sub.new(id) { |emit, cancel| run_role(slot, role, task, emit, cancel) }
+    end
+
+    private def settle(slot : Int32, result : Result) : Nil
+      @results[slot] = result
+      @finished = result
+      @remaining -= 1
+      @ids.reject! { |id| id.slot == slot }
+    end
+
+    private def run_role(slot : Int32, role : Role, task : String,
+                         emit : Emit, cancel : MVU::Cancel) : Nil
+      agent = build(role)
+      cancel.on_cancel { agent.cancel }
+
+      begin
+        output = agent.run(task)
+        emit.call(RoleFinished.new(slot, output, agent.usage))
+      rescue ex
+        emit.call(RoleFailed.new(slot, ex, agent.usage))
+      end
+    end
+
+    private def build(role : Role) : Agent
+      agent = Agent.new(@client,
+        system_prompt: role.system_prompt,
+        max_iterations: role.max_iterations,
+        options: role.options.dup,
+        streaming: role.streaming)
+      if configure = role.configure
+        configure.call agent
+      end
+      agent
+    end
+  end
+
   getter roles : Array(Role)
 
-  @on_result : (Result ->)?
+  property render : MVU::Render
 
-  def initialize(@client : Client)
-    @roles     = [] of Role
-    @on_result = nil
+  @middlewares : Array(MVU::Middleware(State, Event))
+  @runtime     : MVU::Runtime(State, Event, Report)?
+  @on_view     : Proc(Report, Nil)?
+
+  def initialize(@client : Client, @render : MVU::Render = MVU::Render::EveryEvent)
+    @roles       = [] of Role
+    @state       = State.new(@client)
+    @middlewares = [] of MVU::Middleware(State, Event)
   end
 
   def add_role(name : String,
                system_prompt : String = Agent::DEFAULT_SYSTEM_PROMPT,
                max_iterations : Int32 = Agent::DEFAULT_MAX_ITERATIONS,
                options : Options = Options.new,
+               streaming : Bool = false,
                configure : AgentConfigurator? = nil) : Role
-    register_role(Role.new(name, system_prompt, max_iterations, options, configure))
+    register_role(Role.new(name, system_prompt, max_iterations, options, streaming, configure))
   end
 
   def add_role(name : String,
                system_prompt : String = Agent::DEFAULT_SYSTEM_PROMPT,
                max_iterations : Int32 = Agent::DEFAULT_MAX_ITERATIONS,
                options : Options = Options.new,
+               streaming : Bool = false,
                &configure : Agent ->) : Role
-    add_role(name, system_prompt, max_iterations, options, configure)
+    add_role(name, system_prompt, max_iterations, options, streaming, configure)
   end
 
   def [](name : String) : Role?
     @roles.find { |role| role.name == name }
   end
 
-  def on_result(&block : Result ->) : Nil
-    @on_result = block
+  def use(middleware : MVU::Middleware(State, Event)) : Nil
+    @middlewares << middleware
+  end
+
+  def on_view(&block : Report ->) : Nil
+    @on_view = block
+  end
+
+  def running? : Bool
+    !@runtime.nil?
+  end
+
+  def cancel : Nil
+    @runtime.try(&.dispatch(Cancelled.new))
   end
 
   def run(task : String, roles : Array(String)? = nil) : Array(Result)
@@ -104,34 +282,24 @@ class LLM::Swarm
   end
 
   private def execute(pairs : Array(Tuple(Role, String))) : Array(Result)
-    channel = Channel(Tuple(Int32, Result)).new(pairs.size)
+    raise SwarmError.new("swarm is already running") if running?
 
-    pairs.each_with_index do |(role, task), index|
-      spawn do
-        channel.send({index, run_task(role, task)})
-      end
+    @state.begin_run(pairs)
+
+    runtime = MVU::Runtime(State, Event, Report).new(@state,
+      middlewares: @middlewares, render: @render, observer: @on_view)
+    @runtime = runtime
+
+    begin
+      runtime.run
+    ensure
+      @runtime = nil
     end
 
-    results = Array(Result?).new(pairs.size) { nil }
-    pairs.size.times do
-      index, result = channel.receive
-      results[index] = result
-      if hook = @on_result
-        hook.call result
-      end
+    if error = @state.error
+      raise error
     end
-    results.map(&.not_nil!)
-  end
 
-  private def run_task(role : Role, task : String) : Result
-    agent = Agent.new(@client, system_prompt: role.system_prompt,
-      max_iterations: role.max_iterations, options: role.options.dup)
-    if configure = role.configure
-      configure.call agent
-    end
-    output = agent.run(task)
-    Result.new(role, task, output: output, usage: agent.usage)
-  rescue ex
-    Result.new(role, task, error: ex)
+    @state.results.compact
   end
 end

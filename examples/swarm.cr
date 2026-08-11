@@ -30,12 +30,14 @@ swarm.add_role("synthesizer",
   options: LLM::Options.new(user_id: caps.user_id ? "#{session}-synthesizer" : nil,
     include_usage: true))
 
-swarm.on_result do |result|
-  if result.success?
-    usage = result.usage
-    puts "  ✓ #{result.role.name} finished (#{usage.total_tokens} tokens, #{usage.cached_tokens} cached)"
-  else
-    puts "  ✗ #{result.role.name} failed: #{result.error.try(&.message)}"
+swarm.on_view do |report|
+  if result = report.finished
+    if result.success?
+      usage = result.usage
+      puts "  ✓ #{result.role.name} finished (#{usage.total_tokens} tokens, #{usage.cached_tokens} cached), #{report.remaining} left"
+    else
+      puts "  ✗ #{result.role.name} failed: #{result.error.try(&.message)}"
+    end
   end
 end
 

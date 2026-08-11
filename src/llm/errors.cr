@@ -14,6 +14,10 @@ module LLM
 
   class UnsupportedFeatureError < Error; end
 
+  class CancelledError < Error; end
+
+  class StalledError < Error; end
+
   class APIError < Error
     getter status      : Int32
     getter body        : String
