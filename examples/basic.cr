@@ -1,4 +1,4 @@
-# examples/demo.cr
+# examples/basic.cr
 require "colorize"
 require "../src/llm"
 

@@ -1,4 +1,4 @@
-# examples/swarm_demo.cr
+# examples/swarm.cr
 require "../src/llm"
 
 private def rule(title : String) : Nil
