@@ -1,4 +1,4 @@
-# examples/provider_spec.cr
+# spec/provider_spec.cr
 require "./spec_helper"
 
 describe LLM::Provider do

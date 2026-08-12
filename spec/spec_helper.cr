@@ -1,3 +1,3 @@
-# examples/spec_helper.cr
+# spec/spec_helper.cr
 require "spec"
 require "../src/llm"

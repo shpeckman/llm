@@ -1,7 +1,7 @@
 # src/llm/compaction.cr
 module LLM::Compaction
-  CHARS_PER_TOKEN   = 4
-  MESSAGE_OVERHEAD  = 4
+  CHARS_PER_TOKEN   =    4
+  MESSAGE_OVERHEAD  =    4
   MEDIA_PART_TOKENS = 1024
 
   def self.estimate(messages : Array(Message)) : Int32
@@ -55,7 +55,9 @@ module LLM::Compaction
     return kept if rest.empty?
 
     tail_start = rest.size - 1
-    tail_start -= 1 while tail_start > 0 && rest[tail_start].role == "tool"
+    while tail_start > 0 && rest[tail_start].role == "tool"
+      tail_start -= 1
+    end
 
     used = kept.sum(0) { |message| estimate(message) }
     rest[tail_start..].each { |message| used += estimate(message) }
