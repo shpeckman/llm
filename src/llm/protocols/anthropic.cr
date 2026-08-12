@@ -408,7 +408,7 @@ module LLM
           texts << text unless text.empty?
         when "thinking"
           thought = partial.thinking.to_s
-          thinking << thought unless thinking.empty?
+          thinking << thought unless thought.empty?
         else
           calls << ToolCall.new(id: partial.tool_id,
             function: FunctionCall.new(partial.tool_name, partial.input.to_s))
