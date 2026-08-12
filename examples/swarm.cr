@@ -112,3 +112,26 @@ puts "Final Role: #{sequence_result2.final_role.name}"
 puts "Final Output: #{sequence_result2.output}"
 puts "Total Tokens: #{sequence_result2.usage.total_tokens}"
 
+
+# ==============================================================================
+# 3. SHARED BLACKBOARD
+# ==============================================================================
+
+swarm.add_role("research_agent",
+  system_prompt: "You are a researcher. Find exactly three facts about penguins. Store your findings on the blackboard under the key 'penguin_facts', then transfer control to 'writer_agent'. Do not give the user the facts directly.",
+  handoffs: ["writer_agent"])
+
+swarm.add_role("writer_agent",
+  system_prompt: "You are a writer. Read the 'penguin_facts' from the blackboard, and write a one-paragraph short story incorporating them.")
+
+rule "Swarm: Shared Blackboard (Research -> Write)"
+swarm.blackboard.clear
+sequence_result3 = swarm.run_sequence("Write a story about penguins based on research.", starting_role: "research_agent")
+
+puts
+puts "Final Role: #{sequence_result3.final_role.name}"
+puts "Final Output: #{sequence_result3.output}"
+puts "Blackboard keys: #{swarm.blackboard.keys}"
+puts "Blackboard contents ('penguin_facts'):"
+puts swarm.blackboard.get("penguin_facts")
+

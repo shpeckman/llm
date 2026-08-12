@@ -2,6 +2,110 @@
 class LLM::Swarm
   alias AgentConfigurator = Agent ->
 
+  class Blackboard
+    @store : Hash(String, String)
+    @mutex : Mutex
+
+    def initialize
+      @store = {} of String => String
+      @mutex = Mutex.new
+    end
+
+    def get(key : String) : String?
+      @mutex.synchronize { @store[key]? }
+    end
+
+    def set(key : String, value : String) : Nil
+      @mutex.synchronize { @store[key] = value }
+    end
+
+    def keys : Array(String)
+      @mutex.synchronize { @store.keys }
+    end
+
+    def clear : Nil
+      @mutex.synchronize { @store.clear }
+    end
+  end
+
+  class ReadBlackboardTool < Tool::Custom
+    def initialize(@blackboard : Blackboard)
+    end
+    
+    def name : String
+      "read_blackboard"
+    end
+
+    def description : String
+      "Read a string value from the shared swarm blackboard."
+    end
+
+    def parameters_schema : JSON::Any
+      JSON.parse(%({
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "The key to read."
+          }
+        },
+        "required": ["key"],
+        "additionalProperties": false
+      }))
+    end
+
+    def execute(arguments : JSON::Any) : String
+      key = arguments["key"]?.try(&.as_s?)
+      return "Error: missing or invalid 'key'" unless key
+
+      if value = @blackboard.get(key)
+        value
+      else
+        "Error: key '#{key}' not found on the blackboard."
+      end
+    end
+  end
+
+  class WriteBlackboardTool < Tool::Custom
+    def initialize(@blackboard : Blackboard)
+    end
+
+    def name : String
+      "write_blackboard"
+    end
+
+    def description : String
+      "Write a string value to the shared swarm blackboard. Useful for sharing data between agents."
+    end
+
+    def parameters_schema : JSON::Any
+      JSON.parse(%({
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "The key to write to."
+          },
+          "value": {
+            "type": "string",
+            "description": "The content to store."
+          }
+        },
+        "required": ["key", "value"],
+        "additionalProperties": false
+      }))
+    end
+
+    def execute(arguments : JSON::Any) : String
+      key = arguments["key"]?.try(&.as_s?)
+      value = arguments["value"]?.try(&.as_s?)
+      return "Error: missing or invalid 'key' or 'value'" unless key && value
+
+      @blackboard.set(key, value)
+      "Success: stored #{value.bytesize} bytes at '#{key}'."
+    end
+  end
+
   class HandoffTool < Tool::Custom
     getter target_role : String
 
@@ -146,6 +250,8 @@ class LLM::Swarm
     getter remaining : Int32
     getter cancelled : Bool
     getter error     : Exception?
+    
+    property build_hook : (Role -> Agent)?
 
     @client   : Client
     @pairs    : Array(Tuple(Role, String))
@@ -227,7 +333,7 @@ class LLM::Swarm
 
     private def run_role(slot : Int32, role : Role, task : String,
                          emit : Emit, cancel : MVU::Cancel) : Nil
-      agent = build(role)
+      agent = @build_hook.not_nil!.call(role)
       cancel.on_cancel { agent.cancel }
 
       begin
@@ -237,21 +343,10 @@ class LLM::Swarm
         emit.call(RoleFailed.new(slot, ex, agent.usage, agent.cost))
       end
     end
-
-    private def build(role : Role) : Agent
-      agent = Agent.new(@client,
-        system_prompt: role.system_prompt,
-        max_iterations: role.max_iterations,
-        options: role.options.dup,
-        streaming: role.streaming)
-      if configure = role.configure
-        configure.call agent
-      end
-      agent
-    end
   end
 
-  getter roles : Array(Role)
+  getter roles      : Array(Role)
+  getter blackboard : Blackboard
 
   property render : MVU::Render
 
@@ -262,7 +357,9 @@ class LLM::Swarm
 
   def initialize(@client : Client, @render : MVU::Render = MVU::Render::EveryEvent)
     @roles       = [] of Role
+    @blackboard  = Blackboard.new
     @state       = State.new(@client)
+    @state.build_hook = ->(r : Role) { build(r) }
     @middlewares = [] of MVU::Middleware(State, Event)
   end
 
@@ -322,21 +419,8 @@ class LLM::Swarm
     loop do
       role = self[current_role_name] || raise SwarmError.new("unknown role: #{current_role_name}")
       
-      agent = Agent.new(@client,
-        system_prompt: role.system_prompt,
-        max_iterations: role.max_iterations,
-        options: role.options.dup,
-        streaming: role.streaming)
-        
-      if configure = role.configure
-        configure.call agent
-      end
-
+      agent = build(role)
       agent.history = history
-
-      role.handoffs.each do |target|
-        agent.register(HandoffTool.new(target))
-      end
 
       input = history.empty? ? task : nil
 
@@ -384,6 +468,26 @@ class LLM::Swarm
     role
   end
 
+  private def build(role : Role) : Agent
+    agent = Agent.new(@client,
+      system_prompt: role.system_prompt,
+      max_iterations: role.max_iterations,
+      options: role.options.dup,
+      streaming: role.streaming)
+    
+    agent.register(ReadBlackboardTool.new(@blackboard))
+    agent.register(WriteBlackboardTool.new(@blackboard))
+
+    role.handoffs.each do |target|
+      agent.register(HandoffTool.new(target))
+    end
+
+    if configure = role.configure
+      configure.call agent
+    end
+    agent
+  end
+
   private def execute(pairs : Array(Tuple(Role, String))) : Array(Result)
     raise SwarmError.new("swarm is already running") if running?
 
@@ -406,4 +510,3 @@ class LLM::Swarm
     @state.results.compact
   end
 end
-
