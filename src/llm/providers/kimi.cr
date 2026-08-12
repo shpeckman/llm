@@ -45,12 +45,6 @@ module LLM
       image_input: true,
       video_input: true)
 
-    MOONSHOT_V1_VISION = Capabilities.new(
-      forced_tool_choice: false,
-      max_tokens_field: "max_completion_tokens",
-      prompt_cache_key: true,
-      image_input: true)
-
     MOONSHOT_V1_8K_VISION = Capabilities.new(
       forced_tool_choice: false,
       max_tokens_field: "max_completion_tokens",

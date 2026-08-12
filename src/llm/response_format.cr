@@ -103,17 +103,21 @@ module LLM
       {
         type: "object",
         properties: {
+          {% has_props = false %}
           {% for ivar in resolved.instance_vars %}
+            {% has_props = true %}
             {{ivar.name.stringify}}: LLM.schema_json({{ivar.type}}),
           {% end %}
-        },
+        }{% unless has_props %} of String => JSON::Any{% end %},
         required: [
+          {% has_required = false %}
           {% for ivar in resolved.instance_vars %}
             {% unless ivar.type.nilable? %}
+              {% has_required = true %}
               {{ivar.name.stringify}},
             {% end %}
           {% end %}
-        ],
+        ]{% unless has_required %} of String{% end %},
         additionalProperties: false,
       }
     {% end %}
