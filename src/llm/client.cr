@@ -1,4 +1,3 @@
-# src/llm/client.cr
 require "http/client"
 require "json"
 require "uri"
@@ -29,6 +28,10 @@ class LLM::Client
     @provider.capabilities(model || @default_model)
   end
 
+  def pricing(model : String? = nil) : Pricing
+    capabilities(model).pricing
+  end
+
   def chat(messages : Array(Message), tools : Array(Tool::Custom)? = nil,
            options : Options = Options.new,
            cancel : Channel(Nil)? = nil) : ChatResponse
@@ -36,7 +39,7 @@ class LLM::Client
     body = request_body(plan, messages, tools, options, false)
     with_retry(cancel, -> { true }) do
       uri    = URI.parse(base_url)
-      client = new_http_client(uri)
+      client = new_http_client(uri, options.timeout)
       watch(client, cancel)
       begin
         response = client.post(completions_path(uri), headers: request_headers, body: body)
@@ -60,7 +63,7 @@ class LLM::Client
     with_retry(cancel, -> { !emitted }) do
       accumulator = StreamAccumulator.new
       uri         = URI.parse(base_url)
-      client      = new_http_client(uri)
+      client      = new_http_client(uri, options.timeout)
       watch(client, cancel)
       begin
         client.post(completions_path(uri), headers: request_headers, body: body) do |response|
@@ -85,6 +88,47 @@ class LLM::Client
       end
       raise CancelledError.new("request was cancelled") if cancelled?(cancel)
       accumulator.response
+    end
+  end
+
+  def embed(input : String | Array(String), model : String? = nil,
+            timeout : Time::Span? = nil) : EmbeddingResponse
+    resolved = model || @provider.default_embedding_model
+    if resolved.nil?
+      raise UnsupportedFeatureError.new("#{@provider.name} has no default embedding " \
+                                        "model; pass model explicitly")
+    end
+    unless @provider.capabilities(resolved).embeddings
+      raise UnsupportedFeatureError.new("#{@provider.name}/#{resolved} does not support " \
+                                        "embeddings")
+    end
+
+    body = JSON.build do |json|
+      json.object do
+        json.field "model", resolved
+        json.field "input" do
+          case input
+          in String
+            json.string(input)
+          in Array(String)
+            json.array { input.each { |item| json.string(item) } }
+          end
+        end
+      end
+    end
+
+    with_retry(nil, -> { true }) do
+      uri    = URI.parse(base_url)
+      client = new_http_client(uri, timeout)
+      begin
+        response = client.post(embeddings_path(uri), headers: request_headers, body: body)
+        if response.status_code >= 400
+          raise APIError.build(response.status_code, response.body, response.headers)
+        end
+        parse_embedding_response(JSON.parse(response.body))
+      ensure
+        client.close
+      end
     end
   end
 
@@ -181,6 +225,23 @@ class LLM::Client
       raise UnsupportedFeatureError.new("#{@provider.name}/#{model} does not accept user_id")
     end
 
+    if format = options.response_format
+      case format.kind
+      in .text?
+        nil
+      in .json_object?
+        unless caps.json_object
+          raise UnsupportedFeatureError.new("#{@provider.name}/#{model} does not support " \
+                                            "response_format 'json_object'")
+        end
+      in .json_schema?
+        unless caps.json_schema
+          raise UnsupportedFeatureError.new("#{@provider.name}/#{model} does not support " \
+                                            "response_format 'json_schema'")
+        end
+      end
+    end
+
     validate_media!(model, caps, messages)
 
     Plan.new(model, caps, thinking, effort, temperature, preserve)
@@ -223,7 +284,7 @@ class LLM::Client
   end
 
   private def with_retry(cancel : Channel(Nil)?, resumable : -> Bool,
-                         &block : -> ChatResponse) : ChatResponse
+                         &block : -> T) : T forall T
     attempt = 0
     loop do
       attempt += 1
@@ -248,14 +309,18 @@ class LLM::Client
     raise Error.new("malformed SSE payload: #{ex.message}")
   end
 
-  private def new_http_client(uri : URI) : HTTP::Client
+  private def new_http_client(uri : URI, timeout : Time::Span? = nil) : HTTP::Client
     client = HTTP::Client.new(uri)
-    client.read_timeout = timeout
+    client.read_timeout = timeout || @timeout
     client
   end
 
   private def completions_path(uri : URI) : String
     "#{uri.path}/chat/completions"
+  end
+
+  private def embeddings_path(uri : URI) : String
+    "#{uri.path}/embeddings"
   end
 
   private def request_headers : HTTP::Headers
@@ -292,6 +357,13 @@ class LLM::Client
         if choice = options.tool_choice
           json.field "tool_choice" do
             choice.build_json(json)
+          end
+        end
+        if format = options.response_format
+          unless format.kind.text?
+            json.field "response_format" do
+              format.build_json(json)
+            end
           end
         end
         if caps.thinking.optional?
@@ -337,6 +409,25 @@ class LLM::Client
     ChatResponse.new(message, finish_reason, usage_from(json, choice))
   rescue ex : KeyError | IndexError | TypeCastError
     raise Error.new("malformed API response body: #{ex.message}")
+  end
+
+  private def parse_embedding_response(json : JSON::Any) : EmbeddingResponse
+    data       = json["data"].as_a
+    embeddings = data.map do |entry|
+      vector = entry["embedding"].as_a.map do |value|
+        value.as_f? || value.as_i?.try(&.to_f64) ||
+          raise Error.new("malformed embeddings response: non-numeric vector element")
+      end
+      Embedding.new(entry["index"]?.try(&.as_i?) || 0, vector)
+    end
+    embeddings.sort_by!(&.index)
+    usage = nil
+    if raw = json["usage"]?
+      usage = Usage.from_any(raw) unless raw.raw.nil?
+    end
+    EmbeddingResponse.new(json["model"]?.try(&.as_s?) || "", embeddings, usage)
+  rescue ex : KeyError | IndexError | TypeCastError
+    raise Error.new("malformed embeddings response body: #{ex.message}")
   end
 
   private def usage_from(json : JSON::Any, choice : JSON::Any) : Usage?
