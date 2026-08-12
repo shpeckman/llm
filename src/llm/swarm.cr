@@ -1,4 +1,3 @@
-# src/llm/swarm.cr
 class LLM::Swarm
   alias AgentConfigurator = Agent ->
 
@@ -25,11 +24,13 @@ class LLM::Swarm
     getter output : String?
     getter usage  : Usage
     getter error  : Exception?
+    getter cost   : Float64
 
     def initialize(@role : Role, @task : String,
                    @output : String? = nil,
                    @usage : Usage = Usage.new,
-                   @error : Exception? = nil)
+                   @error : Exception? = nil,
+                   @cost : Float64 = 0.0)
     end
 
     def success? : Bool
@@ -48,8 +49,10 @@ class LLM::Swarm
     getter slot   : Int32
     getter output : String
     getter usage  : Usage
+    getter cost   : Float64
 
-    def initialize(@slot : Int32, @output : String, @usage : Usage)
+    def initialize(@slot : Int32, @output : String, @usage : Usage,
+                   @cost : Float64 = 0.0)
     end
   end
 
@@ -57,8 +60,10 @@ class LLM::Swarm
     getter slot  : Int32
     getter error : Exception
     getter usage : Usage
+    getter cost  : Float64
 
-    def initialize(@slot : Int32, @error : Exception, @usage : Usage)
+    def initialize(@slot : Int32, @error : Exception, @usage : Usage,
+                   @cost : Float64 = 0.0)
     end
   end
 
@@ -86,6 +91,12 @@ class LLM::Swarm
 
     def initialize(@results : Array(Result?), @finished : Result?,
                    @remaining : Int32, @cancelled : Bool, @error : Exception?)
+    end
+
+    # Total cost in USD across all settled results. Results with unknown
+    # pricing contribute 0.0.
+    def cost : Float64
+      @results.sum(0.0) { |result| result.try(&.cost) || 0.0 }
     end
   end
 
@@ -129,10 +140,10 @@ class LLM::Swarm
       case event
       in RoleFinished
         role, task = @pairs[event.slot]
-        settle(event.slot, Result.new(role, task, output: event.output, usage: event.usage))
+        settle(event.slot, Result.new(role, task, output: event.output, usage: event.usage, cost: event.cost))
       in RoleFailed
         role, task = @pairs[event.slot]
-        settle(event.slot, Result.new(role, task, usage: event.usage, error: event.error))
+        settle(event.slot, Result.new(role, task, usage: event.usage, cost: event.cost, error: event.error))
       in Crashed
         @error = event.error
         @ids.clear
@@ -182,9 +193,9 @@ class LLM::Swarm
 
       begin
         output = agent.run(task)
-        emit.call(RoleFinished.new(slot, output, agent.usage))
+        emit.call(RoleFinished.new(slot, output, agent.usage, agent.cost))
       rescue ex
-        emit.call(RoleFailed.new(slot, ex, agent.usage))
+        emit.call(RoleFailed.new(slot, ex, agent.usage, agent.cost))
       end
     end
 
