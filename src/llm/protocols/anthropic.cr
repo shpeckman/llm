@@ -405,14 +405,14 @@ module LLM
         blocks << partial.to_block
         case partial.kind
         when "text"
-          text = partial.text.to_s
+          text = partial.final_text
           texts << text unless text.empty?
         when "thinking"
-          thought = partial.thinking.to_s
+          thought = partial.final_thinking
           thinking << thought unless thought.empty?
         else
           calls << ToolCall.new(id: partial.tool_id,
-            function: FunctionCall.new(partial.tool_name, partial.input.to_s))
+            function: FunctionCall.new(partial.tool_name, partial.final_input))
         end
       end
       message = Message.assistant(
@@ -513,17 +513,38 @@ module LLM
     property tool_id   : String = ""
     property tool_name : String = ""
 
+    @final_text      : String?
+    @final_thinking  : String?
+    @final_signature : String?
+    @final_input     : String?
+
     def initialize(@kind : String)
+    end
+
+    def final_text : String
+      @final_text ||= @text.to_s
+    end
+
+    def final_thinking : String
+      @final_thinking ||= @thinking.to_s
+    end
+
+    def final_signature : String
+      @final_signature ||= @signature.to_s
+    end
+
+    def final_input : String
+      @final_input ||= @input.to_s
     end
 
     def to_block : JSON::Any
       case @kind
       when "text"
-        JSON.parse({type: "text", text: @text.to_s}.to_json)
+        JSON.parse({type: "text", text: final_text}.to_json)
       when "thinking"
-        JSON.parse({type: "thinking", thinking: @thinking.to_s, signature: @signature.to_s}.to_json)
+        JSON.parse({type: "thinking", thinking: final_thinking, signature: final_signature}.to_json)
       else
-        raw       = @input.to_s
+        raw       = final_input
         input_any = raw.empty? ? JSON.parse("{}") : (JSON.parse(raw) rescue JSON.parse("{}"))
         JSON.parse({type: "tool_use", id: @tool_id, name: @tool_name, input: input_any}.to_json)
       end

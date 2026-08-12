@@ -11,7 +11,7 @@ private class WeatherTool < LLM::Tool::Custom
   end
 
   def parameters_schema : JSON::Any
-    JSON.parse(%({"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}))
+    JSON.parse(LLM::SpecFixtures::ANTHROPIC[:weather_schema])
   end
 
   def execute(arguments : JSON::Any) : String
@@ -111,7 +111,7 @@ describe LLM::AnthropicProtocol do
       body = anthropic_body([
         LLM::Message.user("weather in SF?"),
         LLM::Message.assistant(tool_calls: [
-          LLM::ToolCall.new(id: "toolu_1", function: LLM::FunctionCall.new("get_weather", %({"city":"SF"}))),
+          LLM::ToolCall.new(id: "toolu_1", function: LLM::FunctionCall.new("get_weather", LLM::SpecFixtures::ANTHROPIC[:weather_args])),
         ]),
         LLM::Message.tool_result("toolu_1", "sunny"),
       ])
@@ -138,13 +138,10 @@ describe LLM::AnthropicProtocol do
     end
 
     it "passes preserved assistant blocks back verbatim" do
-      blocks = JSON.parse(%([
-        {"type":"thinking","thinking":"hmm","signature":"sig123"},
-        {"type":"tool_use","id":"toolu_1","name":"get_weather","input":{"city":"SF"}}
-      ])).as_a
+      blocks = JSON.parse(LLM::SpecFixtures::ANTHROPIC[:preserved_blocks]).as_a
       assistant = LLM::Message.assistant(
         tool_calls: [LLM::ToolCall.new(id: "toolu_1",
-          function: LLM::FunctionCall.new("get_weather", %({"city":"SF"})))],
+          function: LLM::FunctionCall.new("get_weather", LLM::SpecFixtures::ANTHROPIC[:weather_args]))],
         reasoning_content: "hmm")
       assistant.response_blocks = blocks
       body = anthropic_body([
@@ -161,15 +158,7 @@ describe LLM::AnthropicProtocol do
 
   describe "#parse_chat_response" do
     it "assembles text, thinking and tool_use blocks" do
-      response = anthropic_protocol.parse_chat_response(JSON.parse(%({
-        "content": [
-          {"type":"thinking","thinking":"let me check","signature":"sig"},
-          {"type":"text","text":"checking weather"},
-          {"type":"tool_use","id":"toolu_1","name":"get_weather","input":{"city":"SF"}}
-        ],
-        "stop_reason": "tool_use",
-        "usage": {"input_tokens":10,"output_tokens":20,"cache_read_input_tokens":4}
-      })))
+      response = anthropic_protocol.parse_chat_response(JSON.parse(LLM::SpecFixtures::ANTHROPIC[:chat_response]))
       response.finish_reason.should eq "tool_calls"
       response.message.text.should eq "checking weather"
       response.message.reasoning_content.should eq "let me check"
@@ -189,20 +178,20 @@ describe LLM::AnthropicProtocol do
   describe "stream accumulation" do
     it "rebuilds the response from SSE events" do
       acc = anthropic_protocol.accumulator
-      acc.add(JSON.parse(%({"type":"message_start","message":{"usage":{"input_tokens":12,"output_tokens":1}}})))
-      acc.add(JSON.parse(%({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}})))
+      acc.add(JSON.parse(LLM::SpecFixtures::ANTHROPIC[:stream_message_start]))
+      acc.add(JSON.parse(LLM::SpecFixtures::ANTHROPIC[:stream_thinking_start]))
 
-      chunk = acc.add(JSON.parse(%({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm"}})))
+      chunk = acc.add(JSON.parse(LLM::SpecFixtures::ANTHROPIC[:stream_thinking_delta]))
       chunk.not_nil!.reasoning_delta.should eq "hmm"
 
-      acc.add(JSON.parse(%({"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig"}})))
-      acc.add(JSON.parse(%({"type":"content_block_stop","index":0})))
-      acc.add(JSON.parse(%({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"get_weather","input":{}}})))
-      acc.add(JSON.parse(%({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"city\":"}})))
-      acc.add(JSON.parse(%({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"SF\"}"}})))
-      acc.add(JSON.parse(%({"type":"content_block_stop","index":1})))
-      acc.add(JSON.parse(%({"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":30}})))
-      acc.add(JSON.parse(%({"type":"message_stop"})))
+      acc.add(JSON.parse(LLM::SpecFixtures::ANTHROPIC[:stream_signature_delta]))
+      acc.add(JSON.parse(LLM::SpecFixtures::ANTHROPIC[:stream_block_stop_0]))
+      acc.add(JSON.parse(LLM::SpecFixtures::ANTHROPIC[:stream_tool_use_start]))
+      acc.add(JSON.parse(LLM::SpecFixtures::ANTHROPIC[:stream_tool_use_delta_1]))
+      acc.add(JSON.parse(LLM::SpecFixtures::ANTHROPIC[:stream_tool_use_delta_2]))
+      acc.add(JSON.parse(LLM::SpecFixtures::ANTHROPIC[:stream_block_stop_1]))
+      acc.add(JSON.parse(LLM::SpecFixtures::ANTHROPIC[:stream_message_delta]))
+      acc.add(JSON.parse(LLM::SpecFixtures::ANTHROPIC[:stream_message_stop]))
 
       response = acc.response
       response.finish_reason.should eq "tool_calls"
@@ -219,23 +208,23 @@ describe LLM::AnthropicProtocol do
 
     it "emits content deltas" do
       acc = anthropic_protocol.accumulator
-      acc.add(JSON.parse(%({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}})))
-      chunk = acc.add(JSON.parse(%({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}})))
+      acc.add(JSON.parse(LLM::SpecFixtures::ANTHROPIC[:stream_text_start]))
+      chunk = acc.add(JSON.parse(LLM::SpecFixtures::ANTHROPIC[:stream_text_delta]))
       chunk.not_nil!.content_delta.should eq "Hello"
     end
 
     it "raises a retryable ServerError on overloaded_error events" do
       acc = anthropic_protocol.accumulator
       ex = expect_raises(LLM::ServerError) do
-        acc.add(JSON.parse(%({"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}})))
+        acc.add(JSON.parse(LLM::SpecFixtures::ANTHROPIC[:stream_error]))
       end
       ex.retryable?.should be_true
     end
 
     it "ignores pings and unknown event types" do
       acc = anthropic_protocol.accumulator
-      acc.add(JSON.parse(%({"type":"ping"}))).should be_nil
-      acc.add(JSON.parse(%({"type":"future_event","data":{}}))).should be_nil
+      acc.add(JSON.parse(LLM::SpecFixtures::ANTHROPIC[:stream_ping])).should be_nil
+      acc.add(JSON.parse(LLM::SpecFixtures::ANTHROPIC[:stream_future_event])).should be_nil
     end
   end
 
