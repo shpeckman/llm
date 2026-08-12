@@ -1,4 +1,5 @@
-# src/llm/capabilities.cr
+require "./pricing"
+
 module LLM
   enum ThinkingSupport
     Unsupported
@@ -38,6 +39,12 @@ module LLM
     getter user_id                          : Bool
     getter image_input                      : Bool
     getter video_input                      : Bool
+    getter json_object                      : Bool
+    getter json_schema                      : Bool
+    getter embeddings                       : Bool
+    getter context_window                   : Int32 # 0 = unknown
+    getter max_output_tokens                : Int32 # 0 = unknown
+    getter pricing                          : Pricing
 
     def initialize(*, @tools : Bool = true,
                    @forced_tool_choice : Bool = true,
@@ -53,7 +60,13 @@ module LLM
                    @prompt_cache_key : Bool = false,
                    @user_id : Bool = false,
                    @image_input : Bool = false,
-                   @video_input : Bool = false)
+                   @video_input : Bool = false,
+                   @json_object : Bool = false,
+                   @json_schema : Bool = false,
+                   @embeddings : Bool = false,
+                   @context_window : Int32 = 0,
+                   @max_output_tokens : Int32 = 0,
+                   @pricing : Pricing = Pricing::UNKNOWN)
     end
 
     DEFAULT = new

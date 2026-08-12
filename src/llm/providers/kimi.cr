@@ -1,4 +1,3 @@
-# src/llm/providers/kimi.cr
 module LLM
   class KimiProvider < Provider
     K3 = Capabilities.new(
@@ -52,6 +51,27 @@ module LLM
       prompt_cache_key: true,
       image_input: true)
 
+    MOONSHOT_V1_8K_VISION = Capabilities.new(
+      forced_tool_choice: false,
+      max_tokens_field: "max_completion_tokens",
+      prompt_cache_key: true,
+      image_input: true,
+      context_window: 8192)
+
+    MOONSHOT_V1_32K_VISION = Capabilities.new(
+      forced_tool_choice: false,
+      max_tokens_field: "max_completion_tokens",
+      prompt_cache_key: true,
+      image_input: true,
+      context_window: 32768)
+
+    MOONSHOT_V1_128K_VISION = Capabilities.new(
+      forced_tool_choice: false,
+      max_tokens_field: "max_completion_tokens",
+      prompt_cache_key: true,
+      image_input: true,
+      context_window: 131072)
+
     MOONSHOT_V1 = Capabilities.new(
       forced_tool_choice: false,
       max_tokens_field: "max_completion_tokens",
@@ -62,9 +82,9 @@ module LLM
       {"kimi-k2.7-code",                  K2_7_CODE},
       {"kimi-k2.6",                       K2_6},
       {"kimi-k2.5",                       K2_5},
-      {"moonshot-v1-8k-vision-preview",   MOONSHOT_V1_VISION},
-      {"moonshot-v1-32k-vision-preview",  MOONSHOT_V1_VISION},
-      {"moonshot-v1-128k-vision-preview", MOONSHOT_V1_VISION},
+      {"moonshot-v1-8k-vision-preview",   MOONSHOT_V1_8K_VISION},
+      {"moonshot-v1-32k-vision-preview",  MOONSHOT_V1_32K_VISION},
+      {"moonshot-v1-128k-vision-preview", MOONSHOT_V1_128K_VISION},
       {"moonshot-v1",                     MOONSHOT_V1},
     ]
 

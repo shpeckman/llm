@@ -1,5 +1,5 @@
-# src/llm/options.cr
 require "json"
+require "./response_format"
 
 module LLM
   struct ToolChoice
@@ -88,12 +88,15 @@ module LLM
     property prompt_cache_key  : String?
     property user_id           : String?
     property include_usage     : Bool
+    property response_format   : ResponseFormat?
+    property timeout           : Time::Span?
 
     def initialize(@model : String? = nil, @temperature : Float64? = nil,
                    @max_tokens : Int32? = nil, @thinking : Bool? = nil,
                    @preserve_thinking : Bool? = nil, @reasoning_effort : String? = nil,
                    @tool_choice : ToolChoice? = nil, @prompt_cache_key : String? = nil,
-                   @user_id : String? = nil, @include_usage : Bool = false)
+                   @user_id : String? = nil, @include_usage : Bool = false,
+                   @response_format : ResponseFormat? = nil, @timeout : Time::Span? = nil)
     end
   end
 end

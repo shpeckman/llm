@@ -1,15 +1,15 @@
-# src/llm/provider.cr
 class LLM::Provider
   alias ModelTable = Array(Tuple(String, Capabilities))
 
   EMPTY_TABLE = ModelTable.new
 
-  getter name          : String
-  getter base_url      : String
-  getter default_model : String
-  @api_key_env         : Array(String)
-  @fallback            : Capabilities
-  @models              : ModelTable
+  getter name                    : String
+  getter base_url                : String
+  getter default_model           : String
+  getter default_embedding_model : String?
+  @api_key_env                   : Array(String)
+  @fallback                      : Capabilities
+  @models                        : ModelTable
 
   def api_key_env : Array(String)
     @api_key_env.dup
@@ -18,7 +18,8 @@ class LLM::Provider
   def initialize(@name : String, @base_url : String, @default_model : String,
                  api_key_env : Array(String),
                  fallback : Capabilities = Capabilities::DEFAULT,
-                 models : ModelTable = EMPTY_TABLE)
+                 models : ModelTable = EMPTY_TABLE,
+                 @default_embedding_model : String? = nil)
     @base_url    = @base_url.rstrip('/')
     @api_key_env = api_key_env.dup
     @fallback    = fallback
@@ -36,8 +37,10 @@ class LLM::Provider
   def self.custom(name : String, base_url : String, default_model : String,
                   api_key_env : Array(String),
                   fallback : Capabilities = Capabilities::DEFAULT,
-                  models : ModelTable = EMPTY_TABLE) : Provider
-    new(name, base_url, default_model, api_key_env, fallback, models)
+                  models : ModelTable = EMPTY_TABLE,
+                  default_embedding_model : String? = nil) : Provider
+    new(name, base_url, default_model, api_key_env, fallback, models,
+      default_embedding_model)
   end
 
   def self.for_name(name : String) : Provider?
