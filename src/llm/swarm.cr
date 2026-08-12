@@ -2,12 +2,36 @@
 class LLM::Swarm
   alias AgentConfigurator = Agent ->
 
+  class HandoffTool < Tool::Custom
+    getter target_role : String
+
+    def initialize(@target_role : String)
+    end
+
+    def name : String
+      "transfer_to_#{@target_role}"
+    end
+
+    def description : String
+      "Transfer control of the conversation to the #{@target_role} role."
+    end
+
+    def parameters_schema : JSON::Any
+      JSON.parse(%({"type":"object","properties":{},"required":[],"additionalProperties":false}))
+    end
+
+    def execute(arguments : JSON::Any) : String
+      raise HandoffSignal.new(@target_role)
+    end
+  end
+
   class Role
     getter name           : String
     getter system_prompt  : String
     getter max_iterations : Int32
     getter options        : Options
     getter streaming      : Bool
+    getter handoffs       : Array(String)
     getter configure      : AgentConfigurator?
 
     def initialize(@name : String,
@@ -15,6 +39,7 @@ class LLM::Swarm
                    @max_iterations : Int32 = Agent::DEFAULT_MAX_ITERATIONS,
                    @options : Options = Options.new,
                    @streaming : Bool = false,
+                   @handoffs : Array(String) = [] of String,
                    @configure : AgentConfigurator? = nil)
     end
   end
@@ -43,6 +68,19 @@ class LLM::Swarm
         raise error
       end
       @output || ""
+    end
+  end
+
+  class SequenceResult
+    getter task       : String
+    getter final_role : Role
+    getter output     : String
+    getter history    : Array(Message)
+    getter usage      : Usage
+    getter cost       : Float64
+
+    def initialize(@task : String, @final_role : Role, @output : String,
+                   @history : Array(Message), @usage : Usage, @cost : Float64)
     end
   end
 
@@ -220,6 +258,7 @@ class LLM::Swarm
   @middlewares : Array(MVU::Middleware(State, Event))
   @runtime     : MVU::Runtime(State, Event, Report)?
   @on_view     : Proc(Report, Nil)?
+  @on_handoff  : Proc(String, String, Nil)?
 
   def initialize(@client : Client, @render : MVU::Render = MVU::Render::EveryEvent)
     @roles       = [] of Role
@@ -232,8 +271,9 @@ class LLM::Swarm
                max_iterations : Int32 = Agent::DEFAULT_MAX_ITERATIONS,
                options : Options = Options.new,
                streaming : Bool = false,
+               handoffs : Array(String) = [] of String,
                configure : AgentConfigurator? = nil) : Role
-    register_role(Role.new(name, system_prompt, max_iterations, options, streaming, configure))
+    register_role(Role.new(name, system_prompt, max_iterations, options, streaming, handoffs, configure))
   end
 
   def add_role(name : String,
@@ -241,8 +281,9 @@ class LLM::Swarm
                max_iterations : Int32 = Agent::DEFAULT_MAX_ITERATIONS,
                options : Options = Options.new,
                streaming : Bool = false,
+               handoffs : Array(String) = [] of String,
                &configure : Agent ->) : Role
-    add_role(name, system_prompt, max_iterations, options, streaming, configure)
+    add_role(name, system_prompt, max_iterations, options, streaming, handoffs, configure)
   end
 
   def [](name : String) : Role?
@@ -257,12 +298,62 @@ class LLM::Swarm
     @on_view = block
   end
 
+  def on_handoff(&block : String, String ->) : Nil
+    @on_handoff = block
+  end
+
   def running? : Bool
     !@runtime.nil?
   end
 
   def cancel : Nil
     @runtime.try(&.dispatch(Cancelled.new))
+  end
+
+  def run_sequence(task : String, starting_role : String) : SequenceResult
+    raise SwarmError.new("swarm is already running") if running?
+
+    history = [] of Message
+    usage = Usage.new
+    cost = 0.0
+    current_role_name = starting_role
+    output = ""
+
+    loop do
+      role = self[current_role_name] || raise SwarmError.new("unknown role: #{current_role_name}")
+      
+      agent = Agent.new(@client,
+        system_prompt: role.system_prompt,
+        max_iterations: role.max_iterations,
+        options: role.options.dup,
+        streaming: role.streaming)
+        
+      if configure = role.configure
+        configure.call agent
+      end
+
+      agent.history = history
+
+      role.handoffs.each do |target|
+        agent.register(HandoffTool.new(target))
+      end
+
+      input = history.empty? ? task : nil
+
+      output = agent.run(input)
+
+      history = agent.history
+      usage += agent.usage
+      cost += agent.cost
+
+      if agent.state.phase.handoff?
+        next_role = agent.state.target_role.not_nil!
+        @on_handoff.try(&.call(current_role_name, next_role))
+        current_role_name = next_role
+      else
+        return SequenceResult.new(task, role, output, history, usage, cost)
+      end
+    end
   end
 
   def run(task : String, roles : Array(String)? = nil) : Array(Result)
@@ -315,3 +406,4 @@ class LLM::Swarm
     @state.results.compact
   end
 end
+

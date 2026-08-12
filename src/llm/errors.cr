@@ -18,6 +18,14 @@ module LLM
 
   class StalledError < Error; end
 
+  class HandoffSignal < Exception
+    getter target_role : String
+
+    def initialize(@target_role : String)
+      super("Handoff to #{@target_role}")
+    end
+  end
+
   class APIError < Error
     getter status      : Int32
     getter body        : String
@@ -130,3 +138,4 @@ module LLM
     end
   end
 end
+

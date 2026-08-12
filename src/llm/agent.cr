@@ -27,9 +27,10 @@ class LLM::Agent
     Done
     Failed
     Cancelled
+    Handoff
 
     def terminal? : Bool
-      done? || failed? || cancelled?
+      done? || failed? || cancelled? || handoff?
     end
   end
 
@@ -62,6 +63,14 @@ class LLM::Agent
     end
   end
 
+  struct HandoffTriggered
+    getter call        : ToolCall
+    getter target_role : String
+
+    def initialize(@call : ToolCall, @target_role : String)
+    end
+  end
+
   struct Failed
     getter error : Exception
 
@@ -72,27 +81,28 @@ class LLM::Agent
   struct Cancelled
   end
 
-  alias Event = ContentDelta | ReasoningDelta | Completed | ToolCompleted | Failed | Cancelled
+  alias Event = ContentDelta | ReasoningDelta | Completed | ToolCompleted | HandoffTriggered | Failed | Cancelled
   alias Cmd = MVU::Cmd(Event)
   alias Sub = MVU::Sub(Event)
   alias Emit = Proc(Event, Nil)
 
   struct Snapshot
-    getter phase     : Phase
-    getter iteration : Int32
-    getter usage     : Usage
-    getter content   : String?
-    getter reasoning : String?
-    getter tool      : ToolCall?
-    getter output    : String?
-    getter answer    : String?
-    getter error     : Exception?
-    getter cost      : Float64
+    getter phase       : Phase
+    getter iteration   : Int32
+    getter usage       : Usage
+    getter content     : String?
+    getter reasoning   : String?
+    getter tool        : ToolCall?
+    getter output      : String?
+    getter answer      : String?
+    getter error       : Exception?
+    getter cost        : Float64
+    getter target_role : String?
 
     def initialize(@phase : Phase, @iteration : Int32, @usage : Usage,
                    @content : String?, @reasoning : String?, @tool : ToolCall?,
                    @output : String?, @answer : String?, @error : Exception?,
-                   @cost : Float64 = 0.0)
+                   @cost : Float64 = 0.0, @target_role : String? = nil)
     end
   end
 
@@ -109,9 +119,14 @@ class LLM::Agent
     getter iteration        : Int32
     getter answer           : String?
     getter error            : Exception?
+    getter target_role      : String?
     property system_prompt  : String
     property max_iterations : Int32
     property streaming      : Bool
+
+    def history=(new_history : Array(Message)) : Nil
+      @history = new_history.dup
+    end
 
     # Opt-in auto-compaction threshold, expressed as a fraction of the
     # model's context window. Nil (the default) disables compaction.
@@ -153,27 +168,34 @@ class LLM::Agent
       @ids << MVU::SubId.new(:request, 0)
     end
 
-    def begin_turn(input : Content) : Nil
-      @history.unshift(Message.system(@system_prompt)) if @history.empty?
-      @history << Message.user(input)
-      @answer    = nil
-      @error     = nil
-      @iteration = 0
-      @cursor    = 0
-      @calls     = [] of ToolCall
+    def begin_turn(input : Content?) : Nil
+      if @history.first?.try(&.role) == "system"
+        @history[0] = Message.system(@system_prompt)
+      else
+        @history.unshift(Message.system(@system_prompt))
+      end
+      @history << Message.user(input) if input
+
+      @answer      = nil
+      @error       = nil
+      @target_role = nil
+      @iteration   = 0
+      @cursor      = 0
+      @calls       = [] of ToolCall
       request
     end
 
     def reset : Nil
       @history.clear
-      @usage     = Usage.new
-      @cost      = 0.0
-      @phase     = Phase::Idle
-      @iteration = 0
-      @cursor    = 0
-      @calls     = [] of ToolCall
-      @answer    = nil
-      @error     = nil
+      @usage       = Usage.new
+      @cost        = 0.0
+      @phase       = Phase::Idle
+      @iteration   = 0
+      @cursor      = 0
+      @calls       = [] of ToolCall
+      @answer      = nil
+      @error       = nil
+      @target_role = nil
     end
 
     def update(event : Event) : {State, Cmd}
@@ -195,6 +217,13 @@ class LLM::Agent
         @tool   = event.call
         @output = event.output
         executed(event)
+      in HandoffTriggered
+        @tool = event.call
+        @output = "Transferred to #{event.target_role}."
+        @history << Message.tool_result(event.call.id, @output.not_nil!)
+        @target_role = event.target_role
+        @phase = Phase::Handoff
+        {self, Cmd.none}
       in Failed
         @error = event.error
         @phase = Phase::Failed
@@ -207,7 +236,7 @@ class LLM::Agent
 
     def view : Snapshot
       Snapshot.new(@phase, @iteration, @usage, @content, @reasoning, @tool,
-        @output, @answer, @error, @cost)
+        @output, @answer, @error, @cost, @target_role)
     end
 
     def done? : Bool
@@ -267,7 +296,13 @@ class LLM::Agent
 
     private def invoke(call : ToolCall) : Cmd
       registry = @registry
-      Cmd.of { ToolCompleted.new(call, registry.dispatch(call)).as(Event) }
+      Cmd.of do
+        begin
+          ToolCompleted.new(call, registry.dispatch(call)).as(Event)
+        rescue ex : HandoffSignal
+          HandoffTriggered.new(call, ex.target_role).as(Event)
+        end
+      end
     end
 
     private def request : Nil
@@ -322,7 +357,7 @@ class LLM::Agent
   @runtime     : MVU::Runtime(State, Event, Snapshot)?
   @on_view     : Proc(Snapshot, Nil)?
 
-  delegate client, registry, history, usage, phase, answer, error, options, cost, to: @state
+  delegate client, registry, history, :history=, usage, phase, answer, error, options, cost, to: @state
   delegate system_prompt, :system_prompt=, to: @state
   delegate max_iterations, :max_iterations=, to: @state
   delegate streaming, :streaming=, to: @state
@@ -391,7 +426,7 @@ class LLM::Agent
     @state.reset
   end
 
-  def run(input : Content) : String
+  def run(input : Content? = nil) : String
     raise Error.new("agent is already running") if running?
 
     @state.begin_turn(input)
@@ -411,6 +446,8 @@ class LLM::Agent
       raise CancelledError.new("agent run was cancelled")
     when .failed?
       raise @state.error || Error.new("agent run failed without an error")
+    when .handoff?
+      return ""
     end
 
     @state.answer || ""

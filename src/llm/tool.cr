@@ -73,9 +73,12 @@ module LLM::Tool
 
       begin
         tool.execute(call.parsed_arguments)
+      rescue ex : HandoffSignal
+        raise ex
       rescue ex
         "Error: #{ex.class}: #{ex.message}"
       end
     end
   end
 end
+
