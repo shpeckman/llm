@@ -10,6 +10,7 @@ class LLM::Provider
   @api_key_env                   : Array(String)
   @fallback                      : Capabilities
   @models                        : ModelTable
+  @default_api_key               : String?
 
   def api_key_env : Array(String)
     @api_key_env.dup
@@ -19,7 +20,8 @@ class LLM::Provider
                  api_key_env : Array(String),
                  fallback : Capabilities = Capabilities::DEFAULT,
                  models : ModelTable = EMPTY_TABLE,
-                 @default_embedding_model : String? = nil)
+                 @default_embedding_model : String? = nil,
+                 @default_api_key : String? = nil)
     @base_url    = @base_url.rstrip('/')
     @api_key_env = api_key_env.dup
     @fallback    = fallback
@@ -34,19 +36,40 @@ class LLM::Provider
     DeepSeekProvider.new
   end
 
+  def self.openai : Provider
+    OpenAIProvider.new
+  end
+
+  def self.openrouter : Provider
+    OpenRouterProvider.new
+  end
+
+  def self.groq : Provider
+    GroqProvider.new
+  end
+
+  def self.ollama : Provider
+    OllamaProvider.new
+  end
+
   def self.custom(name : String, base_url : String, default_model : String,
                   api_key_env : Array(String),
                   fallback : Capabilities = Capabilities::DEFAULT,
                   models : ModelTable = EMPTY_TABLE,
-                  default_embedding_model : String? = nil) : Provider
+                  default_embedding_model : String? = nil,
+                  default_api_key : String? = nil) : Provider
     new(name, base_url, default_model, api_key_env, fallback, models,
-      default_embedding_model)
+      default_embedding_model, default_api_key)
   end
 
   def self.for_name(name : String) : Provider?
     case name.downcase
     when "kimi", "moonshot" then kimi
     when "deepseek"         then deepseek
+    when "openai", "gpt"    then openai
+    when "openrouter"       then openrouter
+    when "groq"             then groq
+    when "ollama"           then ollama
     end
   end
 
@@ -65,7 +88,8 @@ class LLM::Provider
       return value if value && !value.empty?
     end
     generic = env["LLM_API_KEY"]?
-    generic unless generic.nil? || generic.empty?
+    return generic unless generic.nil? || generic.empty?
+    @default_api_key
   end
 end
 
