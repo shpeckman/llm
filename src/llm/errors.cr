@@ -20,9 +20,10 @@ module LLM
 
   class HandoffSignal < Exception
     getter target_role : String
+    getter mode        : Symbol
 
-    def initialize(@target_role : String)
-      super("Handoff to #{@target_role}")
+    def initialize(@target_role : String, @mode : Symbol = :inherited)
+      super("Handoff to #{@target_role} (mode: #{@mode})")
     end
   end
 
@@ -138,4 +139,3 @@ module LLM
     end
   end
 end
-

@@ -81,4 +81,3 @@ module LLM::Tool
     end
   end
 end
-

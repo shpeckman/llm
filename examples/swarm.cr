@@ -81,7 +81,7 @@ end
 # Configure roles that have the authority to transfer control
 swarm.add_role("triage",
   system_prompt: "You are a routing agent. Determine if the user's request is about 'pricing' or 'engineering'. Use the provided tools to transfer the conversation to the appropriate specialist ('sales' or 'engineering'). Do not answer the user's question yourself.",
-  handoffs: ["sales", "engineering"])
+  handoffs: ["sales", "engineering"]) # Arrays default to :inherited
 
 swarm.add_role("sales",
   system_prompt: "You are a sales specialist. Answer the user's question focusing on costs, tiers, and billing. Keep it to one short sentence.")
@@ -112,17 +112,16 @@ puts "Final Role: #{sequence_result2.final_role.name}"
 puts "Final Output: #{sequence_result2.output}"
 puts "Total Tokens: #{sequence_result2.usage.total_tokens}"
 
-
 # ==============================================================================
-# 3. SHARED BLACKBOARD
+# 3. SHARED BLACKBOARD WITH ISOLATED HANDOFF
 # ==============================================================================
 
 swarm.add_role("research_agent",
   system_prompt: "You are a researcher. Find exactly three facts about penguins. Store your findings on the blackboard under the key 'penguin_facts', then transfer control to 'writer_agent'. Do not give the user the facts directly.",
-  handoffs: ["writer_agent"])
+  handoffs: {"writer_agent" => :isolated}) # Dictionary maps to modes
 
 swarm.add_role("writer_agent",
-  system_prompt: "You are a writer. Read the 'penguin_facts' from the blackboard, and write a one-paragraph short story incorporating them.")
+  system_prompt: "You are a creative writer. Read the 'penguin_facts' from the blackboard, and write a one-paragraph short story incorporating them.")
 
 rule "Swarm: Shared Blackboard (Research -> Write)"
 swarm.blackboard.clear
@@ -132,6 +131,3 @@ puts
 puts "Final Role: #{sequence_result3.final_role.name}"
 puts "Final Output: #{sequence_result3.output}"
 puts "Blackboard keys: #{swarm.blackboard.keys}"
-puts "Blackboard contents ('penguin_facts'):"
-puts swarm.blackboard.get("penguin_facts")
-

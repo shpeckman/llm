@@ -66,8 +66,9 @@ class LLM::Agent
   struct HandoffTriggered
     getter call        : ToolCall
     getter target_role : String
+    getter mode        : Symbol
 
-    def initialize(@call : ToolCall, @target_role : String)
+    def initialize(@call : ToolCall, @target_role : String, @mode : Symbol)
     end
   end
 
@@ -87,22 +88,24 @@ class LLM::Agent
   alias Emit = Proc(Event, Nil)
 
   struct Snapshot
-    getter phase       : Phase
-    getter iteration   : Int32
-    getter usage       : Usage
-    getter content     : String?
-    getter reasoning   : String?
-    getter tool        : ToolCall?
-    getter output      : String?
-    getter answer      : String?
-    getter error       : Exception?
-    getter cost        : Float64
-    getter target_role : String?
+    getter phase        : Phase
+    getter iteration    : Int32
+    getter usage        : Usage
+    getter content      : String?
+    getter reasoning    : String?
+    getter tool         : ToolCall?
+    getter output       : String?
+    getter answer       : String?
+    getter error        : Exception?
+    getter cost         : Float64
+    getter target_role  : String?
+    getter handoff_mode : Symbol?
 
     def initialize(@phase : Phase, @iteration : Int32, @usage : Usage,
                    @content : String?, @reasoning : String?, @tool : ToolCall?,
                    @output : String?, @answer : String?, @error : Exception?,
-                   @cost : Float64 = 0.0, @target_role : String? = nil)
+                   @cost : Float64 = 0.0, @target_role : String? = nil,
+                   @handoff_mode : Symbol? = nil)
     end
   end
 
@@ -120,6 +123,7 @@ class LLM::Agent
     getter answer           : String?
     getter error            : Exception?
     getter target_role      : String?
+    getter handoff_mode     : Symbol?
     property system_prompt  : String
     property max_iterations : Int32
     property streaming      : Bool
@@ -165,6 +169,8 @@ class LLM::Agent
       @cursor            = 0
       @ids               = Array(MVU::SubId).new(1)
       @compact_threshold = nil
+      @target_role       = nil
+      @handoff_mode      = nil
       @ids << MVU::SubId.new(:request, 0)
     end
 
@@ -176,26 +182,28 @@ class LLM::Agent
       end
       @history << Message.user(input) if input
 
-      @answer      = nil
-      @error       = nil
-      @target_role = nil
-      @iteration   = 0
-      @cursor      = 0
-      @calls       = [] of ToolCall
+      @answer       = nil
+      @error        = nil
+      @target_role  = nil
+      @handoff_mode = nil
+      @iteration    = 0
+      @cursor       = 0
+      @calls        = [] of ToolCall
       request
     end
 
     def reset : Nil
       @history.clear
-      @usage       = Usage.new
-      @cost        = 0.0
-      @phase       = Phase::Idle
-      @iteration   = 0
-      @cursor      = 0
-      @calls       = [] of ToolCall
-      @answer      = nil
-      @error       = nil
-      @target_role = nil
+      @usage        = Usage.new
+      @cost         = 0.0
+      @phase        = Phase::Idle
+      @iteration    = 0
+      @cursor       = 0
+      @calls        = [] of ToolCall
+      @answer       = nil
+      @error        = nil
+      @target_role  = nil
+      @handoff_mode = nil
     end
 
     def update(event : Event) : {State, Cmd}
@@ -218,11 +226,12 @@ class LLM::Agent
         @output = event.output
         executed(event)
       in HandoffTriggered
-        @tool = event.call
-        @output = "Transferred to #{event.target_role}."
+        @tool   = event.call
+        @output = "Transferred to #{event.target_role} (mode: #{event.mode})."
         @history << Message.tool_result(event.call.id, @output.not_nil!)
-        @target_role = event.target_role
-        @phase = Phase::Handoff
+        @target_role  = event.target_role
+        @handoff_mode = event.mode
+        @phase        = Phase::Handoff
         {self, Cmd.none}
       in Failed
         @error = event.error
@@ -236,7 +245,7 @@ class LLM::Agent
 
     def view : Snapshot
       Snapshot.new(@phase, @iteration, @usage, @content, @reasoning, @tool,
-        @output, @answer, @error, @cost, @target_role)
+        @output, @answer, @error, @cost, @target_role, @handoff_mode)
     end
 
     def done? : Bool
@@ -260,9 +269,6 @@ class LLM::Agent
       @history << message
       if usage = response.usage
         @usage += usage
-        # Cost accumulates even when pricing is unknown — it just accumulates
-        # 0.0. Callers should check `client.pricing(model).known?` before
-        # presenting cost, or treat 0.0 as "unknown".
         @cost += usage.cost(@client.pricing(@options.model))
       end
 
@@ -300,7 +306,7 @@ class LLM::Agent
         begin
           ToolCompleted.new(call, registry.dispatch(call)).as(Event)
         rescue ex : HandoffSignal
-          HandoffTriggered.new(call, ex.target_role).as(Event)
+          HandoffTriggered.new(call, ex.target_role, ex.mode).as(Event)
         end
       end
     end
@@ -361,6 +367,7 @@ class LLM::Agent
   delegate system_prompt, :system_prompt=, to: @state
   delegate max_iterations, :max_iterations=, to: @state
   delegate streaming, :streaming=, to: @state
+  delegate target_role, handoff_mode, to: @state
 
   {% for name, type in DELEGATED_OPTIONS %}
     def {{name.id}} : {{type.id}}
@@ -372,9 +379,6 @@ class LLM::Agent
     end
   {% end %}
 
-  # Opt-in auto-compaction threshold (fraction of the model's context
-  # window). Compaction runs at the top of each request turn; nil disables
-  # it. Values must be in (0.0, 1.0].
   def compact_threshold : Float64?
     @state.compact_threshold
   end

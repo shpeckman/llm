@@ -31,7 +31,7 @@ class LLM::Swarm
   class ReadBlackboardTool < Tool::Custom
     def initialize(@blackboard : Blackboard)
     end
-    
+
     def name : String
       "read_blackboard"
     end
@@ -97,7 +97,7 @@ class LLM::Swarm
     end
 
     def execute(arguments : JSON::Any) : String
-      key = arguments["key"]?.try(&.as_s?)
+      key   = arguments["key"]?.try(&.as_s?)
       value = arguments["value"]?.try(&.as_s?)
       return "Error: missing or invalid 'key' or 'value'" unless key && value
 
@@ -108,8 +108,9 @@ class LLM::Swarm
 
   class HandoffTool < Tool::Custom
     getter target_role : String
+    getter mode        : Symbol
 
-    def initialize(@target_role : String)
+    def initialize(@target_role : String, @mode : Symbol = :inherited)
     end
 
     def name : String
@@ -125,7 +126,7 @@ class LLM::Swarm
     end
 
     def execute(arguments : JSON::Any) : String
-      raise HandoffSignal.new(@target_role)
+      raise HandoffSignal.new(@target_role, @mode)
     end
   end
 
@@ -135,7 +136,7 @@ class LLM::Swarm
     getter max_iterations : Int32
     getter options        : Options
     getter streaming      : Bool
-    getter handoffs       : Array(String)
+    getter handoffs       : Hash(String, Symbol)
     getter configure      : AgentConfigurator?
 
     def initialize(@name : String,
@@ -143,7 +144,7 @@ class LLM::Swarm
                    @max_iterations : Int32 = Agent::DEFAULT_MAX_ITERATIONS,
                    @options : Options = Options.new,
                    @streaming : Bool = false,
-                   @handoffs : Array(String) = [] of String,
+                   @handoffs : Hash(String, Symbol) = {} of String => Symbol,
                    @configure : AgentConfigurator? = nil)
     end
   end
@@ -236,8 +237,6 @@ class LLM::Swarm
                    @remaining : Int32, @cancelled : Bool, @error : Exception?)
     end
 
-    # Total cost in USD across all settled results. Results with unknown
-    # pricing contribute 0.0.
     def cost : Float64
       @results.sum(0.0) { |result| result.try(&.cost) || 0.0 }
     end
@@ -250,7 +249,7 @@ class LLM::Swarm
     getter remaining : Int32
     getter cancelled : Bool
     getter error     : Exception?
-    
+
     property build_hook : (Role -> Agent)?
 
     @client   : Client
@@ -356,9 +355,9 @@ class LLM::Swarm
   @on_handoff  : Proc(String, String, Nil)?
 
   def initialize(@client : Client, @render : MVU::Render = MVU::Render::EveryEvent)
-    @roles       = [] of Role
-    @blackboard  = Blackboard.new
-    @state       = State.new(@client)
+    @roles      = [] of Role
+    @blackboard = Blackboard.new
+    @state      = State.new(@client)
     @state.build_hook = ->(r : Role) { build(r) }
     @middlewares = [] of MVU::Middleware(State, Event)
   end
@@ -368,9 +367,15 @@ class LLM::Swarm
                max_iterations : Int32 = Agent::DEFAULT_MAX_ITERATIONS,
                options : Options = Options.new,
                streaming : Bool = false,
-               handoffs : Array(String) = [] of String,
+               handoffs : Array(String) | Hash(String, Symbol) = [] of String,
                configure : AgentConfigurator? = nil) : Role
-    register_role(Role.new(name, system_prompt, max_iterations, options, streaming, handoffs, configure))
+    normalized = case handoffs
+                 when Array(String)
+                   handoffs.to_h { |t| {t, :inherited} }
+                 else
+                   handoffs
+                 end
+    register_role(Role.new(name, system_prompt, max_iterations, options, streaming, normalized, configure))
   end
 
   def add_role(name : String,
@@ -378,7 +383,7 @@ class LLM::Swarm
                max_iterations : Int32 = Agent::DEFAULT_MAX_ITERATIONS,
                options : Options = Options.new,
                streaming : Bool = false,
-               handoffs : Array(String) = [] of String,
+               handoffs : Array(String) | Hash(String, Symbol) = [] of String,
                &configure : Agent ->) : Role
     add_role(name, system_prompt, max_iterations, options, streaming, handoffs, configure)
   end
@@ -410,15 +415,15 @@ class LLM::Swarm
   def run_sequence(task : String, starting_role : String) : SequenceResult
     raise SwarmError.new("swarm is already running") if running?
 
-    history = [] of Message
-    usage = Usage.new
-    cost = 0.0
+    history           = [] of Message
+    usage             = Usage.new
+    cost              = 0.0
     current_role_name = starting_role
-    output = ""
+    output            = ""
 
     loop do
       role = self[current_role_name] || raise SwarmError.new("unknown role: #{current_role_name}")
-      
+
       agent = build(role)
       agent.history = history
 
@@ -431,9 +436,15 @@ class LLM::Swarm
       cost += agent.cost
 
       if agent.state.phase.handoff?
-        next_role = agent.state.target_role.not_nil!
+        next_role    = agent.state.target_role.not_nil!
+        handoff_mode = agent.state.handoff_mode || :inherited
+
         @on_handoff.try(&.call(current_role_name, next_role))
         current_role_name = next_role
+
+        if handoff_mode == :isolated
+          history = [] of Message
+        end
       else
         return SequenceResult.new(task, role, output, history, usage, cost)
       end
@@ -474,12 +485,12 @@ class LLM::Swarm
       max_iterations: role.max_iterations,
       options: role.options.dup,
       streaming: role.streaming)
-    
+
     agent.register(ReadBlackboardTool.new(@blackboard))
     agent.register(WriteBlackboardTool.new(@blackboard))
 
-    role.handoffs.each do |target|
-      agent.register(HandoffTool.new(target))
+    role.handoffs.each do |target, mode|
+      agent.register(HandoffTool.new(target, mode))
     end
 
     if configure = role.configure
