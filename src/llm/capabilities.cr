@@ -1,3 +1,4 @@
+# src/llm/capabilities.cr
 require "./pricing"
 
 module LLM
@@ -42,7 +43,7 @@ module LLM
     getter json_object                      : Bool
     getter json_schema                      : Bool
     getter embeddings                       : Bool
-    getter context_window                   : Int32 # 0 = unknown
+    getter context_window                   : Int32    # 0 = unknown
     getter max_output_tokens                : Int32 # 0 = unknown
     getter pricing                          : Pricing
 

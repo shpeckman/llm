@@ -1,3 +1,4 @@
+# src/llm/response_format.cr
 require "json"
 
 module LLM
@@ -96,8 +97,8 @@ module LLM
     {% elsif resolved.name.starts_with?("Array(") %}
       {type: "array", items: LLM.schema_json({{resolved.type_vars.first}})}
     {% elsif resolved == Int8 || resolved == Int16 || resolved == Int128 ||
-              resolved == UInt8 || resolved == UInt16 || resolved == UInt32 ||
-              resolved == UInt64 || resolved == UInt128 || resolved == Float32 %}
+               resolved == UInt8 || resolved == UInt16 || resolved == UInt32 ||
+               resolved == UInt64 || resolved == UInt128 || resolved == Float32 %}
       {% raise "LLM.schema_json: #{resolved} is not supported; use Int32, Int64 or Float64" %}
     {% else %}
       {

@@ -1,3 +1,4 @@
+# src/llm/providers/kimi.cr
 module LLM
   class KimiProvider < Provider
     K3 = Capabilities.new(

@@ -1,3 +1,4 @@
+# src/llm/types.cr
 require "base64"
 require "json"
 require "./pricing"
@@ -131,9 +132,15 @@ module LLM
     property tool_call_id      : String?
     property reasoning_content : String?
 
+    # The provider's verbatim assistant content blocks, when the protocol
+    # exposes them (Anthropic). Protocols may pass these back unchanged so
+    # signed thinking blocks survive multi-turn tool use.
+    property response_blocks : Array(JSON::Any)?
+
     def initialize(@role : String, @content : Content? = nil,
                    @tool_calls : Array(ToolCall)? = nil, @tool_call_id : String? = nil,
-                   @reasoning_content : String? = nil)
+                   @reasoning_content : String? = nil,
+                   @response_blocks : Array(JSON::Any)? = nil)
     end
 
     def self.system(content : Content) : Message

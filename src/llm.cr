@@ -1,3 +1,4 @@
+# src/llm.cr
 require "./llm/errors"
 require "./llm/pricing"
 require "./llm/capabilities"
@@ -5,6 +6,7 @@ require "./llm/types"
 require "./llm/response_format"
 require "./llm/options"
 require "./llm/tool"
+require "./llm/protocol"
 require "./llm/provider"
 require "./llm/embeddings"
 require "./llm/client"

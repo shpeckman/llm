@@ -1,3 +1,4 @@
+# src/llm/agent.cr
 require "./compaction"
 
 class LLM::Agent

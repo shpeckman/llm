@@ -1,3 +1,4 @@
+# src/llm/swarm.cr
 class LLM::Swarm
   alias AgentConfigurator = Agent ->
 

@@ -1,3 +1,4 @@
+# src/llm/compaction.cr
 module LLM::Compaction
   CHARS_PER_TOKEN   = 4
   MESSAGE_OVERHEAD  = 4
