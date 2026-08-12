@@ -1,4 +1,5 @@
-# src/llm/agent.cr
+require "./compaction"
+
 class LLM::Agent
   DEFAULT_SYSTEM_PROMPT  = "You are a helpful coding assistant. You help the user with software engineering tasks: reading, writing, and editing files, running shell commands, and searching the codebase. Use the available tools to inspect the workspace before making changes, prefer small precise edits, keep your answers concise, and explain what you did."
   DEFAULT_MAX_ITERATIONS = 50
@@ -14,6 +15,8 @@ class LLM::Agent
     prompt_cache_key:  "String?",
     user_id:           "String?",
     include_usage:     "Bool",
+    response_format:   "ResponseFormat?",
+    timeout:           "Time::Span?",
   }
 
   enum Phase : UInt8
@@ -83,10 +86,12 @@ class LLM::Agent
     getter output    : String?
     getter answer    : String?
     getter error     : Exception?
+    getter cost      : Float64
 
     def initialize(@phase : Phase, @iteration : Int32, @usage : Usage,
                    @content : String?, @reasoning : String?, @tool : ToolCall?,
-                   @output : String?, @answer : String?, @error : Exception?)
+                   @output : String?, @answer : String?, @error : Exception?,
+                   @cost : Float64 = 0.0)
     end
   end
 
@@ -98,6 +103,7 @@ class LLM::Agent
     getter options          : Options
     getter history          : Array(Message)
     getter usage            : Usage
+    getter cost             : Float64
     getter phase            : Phase
     getter iteration        : Int32
     getter answer           : String?
@@ -106,26 +112,43 @@ class LLM::Agent
     property max_iterations : Int32
     property streaming      : Bool
 
-    @calls      : Array(ToolCall)
-    @cursor     : Int32
-    @generation : Int32
-    @ids        : Array(MVU::SubId)
-    @content    : String?
-    @reasoning  : String?
-    @tool       : ToolCall?
-    @output     : String?
+    # Opt-in auto-compaction threshold, expressed as a fraction of the
+    # model's context window. Nil (the default) disables compaction.
+    def compact_threshold : Float64?
+      @compact_threshold
+    end
+
+    def compact_threshold=(value : Float64?) : Float64?
+      if value && (value <= 0.0 || value > 1.0)
+        raise ArgumentError.new("compact_threshold must be in (0.0, 1.0], got #{value}")
+      end
+      @compact_threshold = value
+    end
+
+    @calls             : Array(ToolCall)
+    @cursor            : Int32
+    @generation        : Int32
+    @ids               : Array(MVU::SubId)
+    @content           : String?
+    @reasoning         : String?
+    @tool              : ToolCall?
+    @output            : String?
+    @cost              : Float64
+    @compact_threshold : Float64?
 
     def initialize(@client : Client, @system_prompt : String, @max_iterations : Int32,
                    @options : Options, @streaming : Bool)
-      @registry   = Tool::Registry.new
-      @history    = [] of Message
-      @usage      = Usage.new
-      @phase      = Phase::Idle
-      @iteration  = 0
-      @generation = 0
-      @calls      = [] of ToolCall
-      @cursor     = 0
-      @ids        = Array(MVU::SubId).new(1)
+      @registry          = Tool::Registry.new
+      @history           = [] of Message
+      @usage             = Usage.new
+      @cost              = 0.0
+      @phase             = Phase::Idle
+      @iteration         = 0
+      @generation        = 0
+      @calls             = [] of ToolCall
+      @cursor            = 0
+      @ids               = Array(MVU::SubId).new(1)
+      @compact_threshold = nil
       @ids << MVU::SubId.new(:request, 0)
     end
 
@@ -143,6 +166,7 @@ class LLM::Agent
     def reset : Nil
       @history.clear
       @usage     = Usage.new
+      @cost      = 0.0
       @phase     = Phase::Idle
       @iteration = 0
       @cursor    = 0
@@ -182,7 +206,7 @@ class LLM::Agent
 
     def view : Snapshot
       Snapshot.new(@phase, @iteration, @usage, @content, @reasoning, @tool,
-        @output, @answer, @error)
+        @output, @answer, @error, @cost)
     end
 
     def done? : Bool
@@ -206,6 +230,10 @@ class LLM::Agent
       @history << message
       if usage = response.usage
         @usage += usage
+        # Cost accumulates even when pricing is unknown — it just accumulates
+        # 0.0. Callers should check `client.pricing(model).known?` before
+        # presenting cost, or treat 0.0 as "unknown".
+        @cost += usage.cost(@client.pricing(@options.model))
       end
 
       unless message.tool_call?
@@ -249,6 +277,10 @@ class LLM::Agent
     end
 
     private def request_turn(emit : Emit, cancel : MVU::Cancel) : Nil
+      if threshold = @compact_threshold
+        maybe_compact(threshold)
+      end
+
       tools   = @registry.empty? ? nil : @registry.to_a
       channel = cancel.channel
 
@@ -270,6 +302,15 @@ class LLM::Agent
     rescue ex
       emit.call(Failed.new(ex))
     end
+
+    private def maybe_compact(threshold : Float64) : Nil
+      window = @client.capabilities(@options.model).context_window
+      return if window <= 0
+      budget = Compaction.budget(window, threshold)
+      if Compaction.estimate(@history) > budget
+        @history = Compaction.compact(@history, budget)
+      end
+    end
   end
 
   getter state : State
@@ -280,7 +321,7 @@ class LLM::Agent
   @runtime     : MVU::Runtime(State, Event, Snapshot)?
   @on_view     : Proc(Snapshot, Nil)?
 
-  delegate client, registry, history, usage, phase, answer, error, options, to: @state
+  delegate client, registry, history, usage, phase, answer, error, options, cost, to: @state
   delegate system_prompt, :system_prompt=, to: @state
   delegate max_iterations, :max_iterations=, to: @state
   delegate streaming, :streaming=, to: @state
@@ -294,6 +335,17 @@ class LLM::Agent
       @state.options.{{name.id}} = value
     end
   {% end %}
+
+  # Opt-in auto-compaction threshold (fraction of the model's context
+  # window). Compaction runs at the top of each request turn; nil disables
+  # it. Values must be in (0.0, 1.0].
+  def compact_threshold : Float64?
+    @state.compact_threshold
+  end
+
+  def compact_threshold=(value : Float64?) : Float64?
+    @state.compact_threshold = value
+  end
 
   def initialize(client : Client,
                  system_prompt : String = DEFAULT_SYSTEM_PROMPT,

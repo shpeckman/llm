@@ -1,6 +1,6 @@
-# src/llm/types.cr
 require "base64"
 require "json"
+require "./pricing"
 
 module LLM
   struct ContentPart
@@ -186,6 +186,19 @@ module LLM
       end
     end
 
+    # Strictly parses the message's text content as `T` (which must support
+    # `.from_json`). Raises `LLM::Error` with the type name and a content
+    # snippet (≤200 chars) on malformed JSON — no fence stripping, no
+    # leniency; call `T.from_json` yourself if you need that.
+    def parse(type : T.class) : T forall T
+      T.from_json(text)
+    rescue ex : JSON::ParseException
+      snippet = text
+      snippet = snippet[0, 200] + "..." if snippet.size > 200
+      raise Error.new("failed to parse assistant message as #{T}: #{ex.message} " \
+                      "(content: #{snippet.inspect})")
+    end
+
     def each_part(& : ContentPart ->) : Nil
       content = @content
       return unless content.is_a?(Array(ContentPart))
@@ -262,6 +275,16 @@ module LLM
     def empty? : Bool
       @prompt_tokens == 0 && @completion_tokens == 0 && @total_tokens == 0 && @cached_tokens == 0
     end
+
+    # Cost in USD for this usage at the given per-1M-token `pricing`.
+    # Returns 0.0 when the pricing is unknown (all-zero).
+    def cost(pricing : Pricing) : Float64
+      uncached = @prompt_tokens - @cached_tokens
+      uncached = 0 if uncached < 0
+      (uncached * pricing.input +
+        @cached_tokens * pricing.cached_input +
+        @completion_tokens * pricing.output) / 1_000_000.0
+    end
   end
 
   class ChatResponse
@@ -270,6 +293,12 @@ module LLM
     getter usage         : Usage?
 
     def initialize(@message : Message, @finish_reason : String, @usage : Usage? = nil)
+    end
+
+    # Strictly parses the response message's text content as `T`.
+    # See `Message#parse`.
+    def parse(type : T.class) : T forall T
+      @message.parse(T)
     end
   end
 
