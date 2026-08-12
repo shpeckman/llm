@@ -408,7 +408,7 @@ module LLM
           texts << text unless text.empty?
         when "thinking"
           thought = partial.thinking.to_s
-          thinking << thought unless thought.empty?
+          thinking << thought unless thinking.empty?
         else
           calls << ToolCall.new(id: partial.tool_id,
             function: FunctionCall.new(partial.tool_name, partial.input.to_s))
@@ -429,6 +429,7 @@ module LLM
     private def start_block(index : Int32, block : JSON::Any?) : Nil
       return if block.nil? || block.raw.nil?
       kind = block["type"]?.try(&.as_s?)
+      return if kind.nil?
       return unless kind == "text" || kind == "thinking" || kind == "tool_use"
       partial = PartialBlock.new(kind)
       if kind == "tool_use"
