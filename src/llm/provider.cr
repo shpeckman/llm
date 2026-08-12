@@ -7,6 +7,7 @@ class LLM::Provider
   getter base_url                : String
   getter default_model           : String
   getter default_embedding_model : String?
+  getter protocol                : Protocol
   @api_key_env                   : Array(String)
   @fallback                      : Capabilities
   @models                        : ModelTable
@@ -21,7 +22,8 @@ class LLM::Provider
                  fallback : Capabilities = Capabilities::DEFAULT,
                  models : ModelTable = EMPTY_TABLE,
                  @default_embedding_model : String? = nil,
-                 @default_api_key : String? = nil)
+                 @default_api_key : String? = nil,
+                 @protocol : Protocol = OpenAIProtocol.new)
     @base_url    = @base_url.rstrip('/')
     @api_key_env = api_key_env.dup
     @fallback    = fallback
@@ -52,24 +54,30 @@ class LLM::Provider
     OllamaProvider.new
   end
 
+  def self.anthropic : Provider
+    AnthropicProvider.new
+  end
+
   def self.custom(name : String, base_url : String, default_model : String,
                   api_key_env : Array(String),
                   fallback : Capabilities = Capabilities::DEFAULT,
                   models : ModelTable = EMPTY_TABLE,
                   default_embedding_model : String? = nil,
-                  default_api_key : String? = nil) : Provider
+                  default_api_key : String? = nil,
+                  protocol : Protocol = OpenAIProtocol.new) : Provider
     new(name, base_url, default_model, api_key_env, fallback, models,
-      default_embedding_model, default_api_key)
+      default_embedding_model, default_api_key, protocol)
   end
 
   def self.for_name(name : String) : Provider?
     case name.downcase
-    when "kimi", "moonshot" then kimi
-    when "deepseek"         then deepseek
-    when "openai", "gpt"    then openai
-    when "openrouter"       then openrouter
-    when "groq"             then groq
-    when "ollama"           then ollama
+    when "kimi", "moonshot"    then kimi
+    when "deepseek"            then deepseek
+    when "openai", "gpt"       then openai
+    when "openrouter"          then openrouter
+    when "groq"                then groq
+    when "ollama"              then ollama
+    when "anthropic", "claude" then anthropic
     end
   end
 
